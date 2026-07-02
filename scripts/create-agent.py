@@ -1,37 +1,29 @@
 #!/usr/bin/env python3
 
 import argparse
+import shutil
 from pathlib import Path
 
-parser = argparse.ArgumentParser()
-parser.add_argument("name")
+parser = argparse.ArgumentParser(description="Erstellt einen neuen Agenten aus der Vorlage")
+parser.add_argument("name", help="Name des Agenten")
 args = parser.parse_args()
 
-agent = args.name.lower()
-base = Path("agents") / agent
+name = args.name.lower()
 
-(base / "prompts").mkdir(parents=True, exist_ok=True)
-(base / "knowledge").mkdir(parents=True, exist_ok=True)
+template = Path("templates/agent")
+target = Path("agents") / name
 
-(base / "README.md").write_text(f"""# {agent.upper()}
+if target.exists():
+    print(f"❌ Agent '{name}' existiert bereits.")
+    exit(1)
 
-## Rolle
+shutil.copytree(template, target)
 
-TODO
+for file in target.rglob("*"):
+    if file.is_file():
+        text = file.read_text(encoding="utf-8")
+        text = text.replace("FORGE", name.upper())
+        text = text.replace("forge", name)
+        file.write_text(text, encoding="utf-8")
 
-## Status
-
-🚧 In Entwicklung
-""")
-
-(base / "config.yaml").write_text(f"""name: {agent.upper()}
-
-role: TODO
-
-status: active
-""")
-
-(base / "prompts" / "system.md").write_text(f"# {agent.upper()} System Prompt\n")
-(base / "knowledge" / "mission.md").write_text(f"# {agent.upper()} Mission\n")
-
-print(f"✅ Agent '{agent}' erstellt.")
+print(f"✅ Agent '{name}' erfolgreich erstellt.")

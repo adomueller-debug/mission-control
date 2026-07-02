@@ -12,4 +12,7 @@ database:
   provider: postgres
 
 agents:
-  directory: agents
+  enabled:
+    - boss
+    - forge
+    - aura

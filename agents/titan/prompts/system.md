@@ -1,1 +1,0 @@
-# TITAN System Prompt

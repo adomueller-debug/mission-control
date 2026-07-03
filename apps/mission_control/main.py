@@ -6,7 +6,9 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from apps.mission_control.core.settings import load_config
 from apps.mission_control.core.cli import parse_args
 from apps.mission_control.core.agents import get_agents
-from apps.mission_control.core.agent import load_agent
+from apps.mission_control.core.agent import load_agent, print_agent
+from apps.mission_control.core.tasks import run_task
+from apps.mission_control.core.delegation import delegate
 
 
 def show_status(config):
@@ -23,12 +25,34 @@ def show_status(config):
 
     for name in get_agents():
         agent = load_agent(name)
+        role = agent.get("role", "-") if agent else "-"
+        print(f"• {name} ({role})")
 
-        if agent:
-            role = agent.get("role", "-")
-            print(f"• {name} ({role})")
-        else:
-            print(f"• {name}")
+
+def show_agent(name):
+    agent = load_agent(name)
+
+    if not agent:
+        print(f"Agent '{name}' wurde nicht gefunden.")
+        return
+
+    print_agent(agent)
+
+
+def run_agent(agent, task):
+    result = run_task(agent, task)
+    print(result)
+
+
+def demo_delegation():
+    result = delegate(
+        "forge",
+        "Erstelle einen Plan für die Implementierung einer Projektübersicht."
+    )
+
+    print("\nErgebnis")
+    print("-" * 50)
+    print(result["result"])
 
 
 def main():
@@ -37,8 +61,15 @@ def main():
 
     if args.command == "status":
         show_status(config)
+
+    elif args.command == "agent":
+        show_agent(args.name)
+
+    elif args.command == "run":
+        run_agent(args.agent, args.task)
+
     elif args.command == "start":
-        print(f"{config['app']['name']} wird gestartet...")
+        demo_delegation()
 
 
 if __name__ == "__main__":

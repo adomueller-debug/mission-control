@@ -1,0 +1,245 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+html {
+  background: #080b10;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: "Geist Variable", Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background:
+    radial-gradient(circle at 72% -12%, rgba(84, 193, 255, 0.1), transparent 32rem),
+    radial-gradient(circle at 18% 18%, rgba(122, 92, 255, 0.055), transparent 26rem),
+    #080b10;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  transform: translateZ(0);
+  transition-property: transform, color, background-color, border-color, box-shadow, opacity;
+  transition-duration: 240ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+button:not(:disabled):active {
+  transform: scale(0.975);
+  transition-duration: 80ms;
+}
+
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid rgba(103, 232, 249, 0.58);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: rgba(103, 232, 249, 0.24);
+  color: #f8fafc;
+}
+
+* {
+  scrollbar-color: rgba(148, 163, 184, 0.16) transparent;
+  scrollbar-width: thin;
+}
+
+@keyframes agent-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes agent-orbit-reverse {
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes agent-scan {
+  0%, 100% { transform: translateY(-7px); opacity: 0.12; }
+  50% { transform: translateY(7px); opacity: 0.5; }
+}
+
+@keyframes mc-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mc-glow-drift {
+  0%, 100% { opacity: 0.35; transform: translate3d(-3%, -2%, 0) scale(0.96); }
+  50% { opacity: 0.65; transform: translate3d(4%, 3%, 0) scale(1.05); }
+}
+
+@keyframes mc-shimmer {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(220%); }
+}
+
+@keyframes mc-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -4px, 0); }
+}
+
+.mc-enter {
+  animation: mc-enter 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.mc-panel {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 20px 55px rgba(0, 0, 0, 0.12);
+  transition: border-color 280ms ease, background-color 280ms ease, transform 280ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 280ms ease;
+}
+
+.mc-panel:hover {
+  border-color: rgba(103, 232, 249, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 24px 65px rgba(0, 0, 0, 0.16);
+}
+
+.mc-glass {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.052), rgba(255, 255, 255, 0.018));
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 24px 70px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(24px) saturate(135%);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+}
+
+.mc-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075), 0 7px 20px rgba(0, 0, 0, 0.12);
+}
+
+.mc-button:not(:disabled):hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.052));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11), 0 10px 28px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.mc-button-primary {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: linear-gradient(180deg, #ffffff 0%, #dfe7ee 100%);
+  color: #071018;
+  box-shadow: inset 0 1px 0 #ffffff, 0 9px 28px rgba(125, 211, 252, 0.15), 0 2px 7px rgba(0, 0, 0, 0.28);
+}
+
+.mc-button-primary:not(:disabled):hover {
+  background: linear-gradient(180deg, #ffffff 0%, #bff5ff 100%);
+  box-shadow: inset 0 1px 0 #ffffff, 0 13px 34px rgba(34, 211, 238, 0.22), 0 3px 8px rgba(0, 0, 0, 0.24);
+  transform: translateY(-1px) scale(1.01);
+}
+
+.mc-button:not(:disabled):active,
+.mc-button-primary:not(:disabled):active,
+.mc-icon-button:not(:disabled):active {
+  transform: scale(0.965);
+  transition-duration: 80ms;
+}
+
+.mc-icon-button {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.025));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.065);
+}
+
+.mc-icon-button:not(:disabled):hover {
+  border-color: rgba(103, 232, 249, 0.26);
+  color: #a5f3fc;
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 8px 25px rgba(34, 211, 238, 0.08);
+}
+
+.mc-arrow-action svg:last-child {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mc-arrow-action:not(:disabled):hover svg:last-child {
+  transform: translateX(3px);
+}
+
+.mc-segment {
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.24), 0 1px 0 rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(14px);
+}
+
+.mc-segment-active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.055));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 3px 12px rgba(0, 0, 0, 0.18);
+}
+
+.mc-nav-active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.045));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075), 0 5px 18px rgba(0, 0, 0, 0.11);
+}
+
+.mc-glow {
+  animation: mc-glow-drift 11s ease-in-out infinite;
+}
+
+.mc-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 32%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.055), transparent);
+  animation: mc-shimmer 5.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.agent-orbit {
+  animation: agent-orbit 12s linear infinite;
+}
+
+.agent-orbit-reverse {
+  animation: agent-orbit-reverse 18s linear infinite;
+}
+
+.agent-scan {
+  animation: agent-scan 3.2s ease-in-out infinite;
+}
+
+.agent-glyph.is-active .agent-orbit {
+  animation-duration: 3.5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-orbit,
+  .agent-orbit-reverse,
+  .agent-scan {
+    animation: none;
+  }
+
+  .mc-enter,
+  .mc-glow,
+  .mc-shimmer::after,
+  .mc-float {
+    animation: none;
+  }
+
+  button,
+  .mc-arrow-action svg:last-child {
+    transition-duration: 0.01ms !important;
+  }
+}

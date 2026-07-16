@@ -1,7 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+.venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
 .env
 
+# Runtime data
 data/
-backups/
-
-*.log
-.DS_Store
+mission_control.db
+mission_control.db-*
+archive/
+archive_disabled/
+memory.json
+project_structure.txt

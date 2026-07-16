@@ -5,10 +5,13 @@ import {
   Bot,
   BriefcaseBusiness,
   CalendarDays,
+  ChevronDown,
   CheckCircle2,
   CircleDollarSign,
+  FileCode2,
   FolderKanban,
   ListTodo,
+  PackageCheck,
   Pause,
   Play,
   Plus,
@@ -256,7 +259,7 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
                   </button>
                 </div>
               </div>
-              {selected.status === "archived" ? <ArchivedProjectSummary project={selected} /> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
+              {selected.status === "archived" ? <ArchivedProjectSummary project={selected} /> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} /><TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
             </>
           ) : (
             <div className="grid min-h-[500px] place-items-center px-6 text-center"><div><FolderKanban size={26} className="mx-auto text-slate-700" /><p className="mt-3 text-sm font-medium text-slate-400">Wähle ein Projekt</p><p className="mt-1 max-w-sm text-xs leading-5 text-slate-600">Details, Briefing und Aufgaben werden erst geöffnet, wenn du ein Projekt auswählst.</p></div></div>
@@ -278,6 +281,59 @@ function AutopilotStatus({ project, agents }: { project: Project; agents: AgentP
 function ArchivedProjectSummary({ project }: { project: Project }) {
   const completed = project.tasks.filter((task) => task.status === "completed").length;
   return <div className="mt-5 rounded-2xl border border-white/[0.06] bg-black/10 p-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.04] text-slate-500"><Archive size={16} /></div><div><p className="text-sm font-medium text-slate-300">Projekt ist archiviert</p><p className="mt-1 text-xs leading-5 text-slate-600">Seine {project.tasks.length} Aufgaben werden nicht als offen gezählt und belegen keine Agenten. {completed} Aufgaben waren beim Archivieren abgeschlossen.</p></div></div><button className="mt-4 flex items-center gap-2 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-slate-500" disabled><RotateCcw size={12} /> Wiederherstellung folgt</button></div>;
+}
+
+type ResultArtifact = { title: string; content: string; artifact_type?: string };
+
+function ProjectResults({ project, agents, onOpenRun }: { project: Project; agents: AgentProfile[]; onOpenRun: (id: string) => void }) {
+  const results = project.tasks.flatMap((task) => {
+    const payload = task.result;
+    if (!payload) return [];
+    const summary = typeof payload.summary === "string" ? payload.summary : "";
+    const files = Array.isArray(payload.files) ? payload.files.filter((item): item is string => typeof item === "string") : [];
+    const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts.filter(isResultArtifact) : [];
+    const findings = Array.isArray(payload.findings) ? payload.findings.filter((item): item is string => typeof item === "string") : [];
+    return [{ task, summary, files, artifacts, findings }];
+  });
+  if (results.length === 0) return null;
+  const fileCount = results.reduce((total, item) => total + item.files.length, 0);
+  const artifactCount = results.reduce((total, item) => total + item.artifacts.length, 0);
+
+  return (
+    <section className="mt-5 rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.02] p-3 sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2"><PackageCheck size={15} className="text-emerald-300" /><div><h3 className="text-sm font-semibold">Ergebnisse & Artefakte</h3><p className="mt-0.5 text-[10px] text-slate-600">Persistiert aus {results.length} abgeschlossenen Agentenaufgaben</p></div></div>
+        <div className="flex gap-2 text-[10px] text-slate-500"><span className="rounded-lg bg-white/[0.04] px-2 py-1">{fileCount} Dateien</span><span className="rounded-lg bg-white/[0.04] px-2 py-1">{artifactCount} Artefakte</span></div>
+      </div>
+      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+        {results.map(({ task, summary, files, artifacts, findings }) => {
+          const agent = agents.find((item) => item.id === task.assigned_agent);
+          return (
+            <details key={task.id} className="group rounded-xl border border-white/[0.06] bg-black/10 open:border-emerald-300/10">
+              <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-emerald-300"><CheckCircle2 size={14} /></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-slate-300">{task.title}</span><span className="mt-1 block text-[9px] text-slate-600">{agent?.name ?? task.assigned_agent ?? "Agent"} · {files.length} Dateien · {artifacts.length} Artefakte</span></span>
+                <ChevronDown size={13} className="text-slate-700 transition-transform duration-300 group-open:rotate-180" />
+              </summary>
+              <div className="border-t border-white/[0.055] px-3 pb-3 pt-3">
+                {summary && <p className="text-[11px] leading-5 text-slate-400">{summary}</p>}
+                {files.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{files.map((file) => <span key={file} className="flex max-w-full items-center gap-1 rounded-md bg-cyan-300/[0.05] px-2 py-1 text-[9px] text-cyan-200/60"><FileCode2 size={9} /><span className="truncate">{file}</span></span>)}</div>}
+                {findings.length > 0 && <ul className="mt-3 space-y-1 text-[10px] leading-4 text-slate-500">{findings.slice(0, 3).map((finding) => <li key={finding}>• {finding}</li>)}</ul>}
+                {artifacts.map((artifact) => <details key={artifact.title} className="mt-2 rounded-lg border border-white/[0.05] bg-white/[0.018]"><summary className="cursor-pointer list-none px-2.5 py-2 text-[10px] text-slate-400">{artifact.title}<span className="ml-2 uppercase text-slate-700">{artifact.artifact_type}</span></summary><p className="max-h-48 overflow-auto whitespace-pre-wrap border-t border-white/[0.05] p-2.5 text-[10px] leading-5 text-slate-500">{artifact.content}</p></details>)}
+                {task.run_id && <button onClick={() => onOpenRun(task.run_id!)} className="mc-arrow-action mt-3 flex items-center gap-1.5 text-[10px] text-cyan-300/70">Vollständigen Run öffnen <ArrowRight size={11} /></button>}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function isResultArtifact(value: unknown): value is ResultArtifact {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.title === "string" && typeof candidate.content === "string";
 }
 
 function TaskBoard({ project, agents, onCreate, onUpdate, onStart, onOpenRun }: {

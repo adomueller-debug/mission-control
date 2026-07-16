@@ -243,6 +243,50 @@ class ProjectService:
             db.commit()
         return self.get_project(project_id)
 
+    def archive_project(self, project_id: str) -> dict[str, Any]:
+        run_ids: list[str] = []
+        with SessionLocal() as db:
+            project = db.get(Project, project_id)
+            if project is None:
+                raise KeyError(project_id)
+            project.status = "archived"
+            project.autopilot_enabled = False
+            project.updated_at = datetime.now(UTC)
+            active_tasks = db.scalars(
+                select(ProjectTask).where(
+                    ProjectTask.project_id == project_id,
+                    ProjectTask.status.in_({"queued", "in_progress", "review"}),
+                )
+            ).all()
+            for task in active_tasks:
+                task.status = "cancelled"
+                task.updated_at = project.updated_at
+                if task.run_id:
+                    run_ids.append(task.run_id)
+            db.commit()
+        for run_id in run_ids:
+            run_service.cancel(run_id)
+        project_data = self.get_project(project_id)
+        if project_data is None:
+            raise KeyError(project_id)
+        return project_data
+
+    def restore_project(self, project_id: str) -> dict[str, Any]:
+        with SessionLocal() as db:
+            project = db.get(Project, project_id)
+            if project is None:
+                raise KeyError(project_id)
+            if project.status != "archived":
+                raise ValueError("Nur archivierte Projekte können wiederhergestellt werden.")
+            project.status = "paused"
+            project.autopilot_enabled = False
+            project.updated_at = datetime.now(UTC)
+            db.commit()
+        project_data = self.get_project(project_id)
+        if project_data is None:
+            raise KeyError(project_id)
+        return project_data
+
     def create_task(
         self,
         project_id: str,
@@ -518,17 +562,18 @@ class ProjectService:
             run = db.get(AgentRun, task.run_id)
             if run is None:
                 continue
-            status = RUN_TO_TASK_STATUS.get(run.status, task.status)
-            if status != task.status:
-                task.status = status
-                task.updated_at = datetime.now(UTC)
-                changed = True
+            project = db.get(Project, task.project_id)
+            if project is None or project.status != "archived":
+                status = RUN_TO_TASK_STATUS.get(run.status, task.status)
+                if status != task.status:
+                    task.status = status
+                    task.updated_at = datetime.now(UTC)
+                    changed = True
             if run.status == "completed" and run.result and run.result != task.result:
                 task.result = run.result
                 task.updated_at = datetime.now(UTC)
                 changed = True
             if run.status == "completed" and run.result:
-                project = db.get(Project, task.project_id)
                 if project is not None:
                     _, created = project_artifact_service.archive_completed_task(
                         db, project, task, run

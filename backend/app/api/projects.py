@@ -99,6 +99,24 @@ def update_project(project_id: str, request: UpdateProjectRequest):
     return project
 
 
+@router.post("/projects/{project_id}/archive")
+def archive_project(project_id: str):
+    try:
+        return project_service.archive_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden") from exc
+
+
+@router.post("/projects/{project_id}/restore")
+def restore_project(project_id: str):
+    try:
+        return project_service.restore_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/tasks", status_code=201)
 def create_project_task(project_id: str, request: CreateProjectTaskRequest):
     payload = request.model_dump(exclude={"due_at"})

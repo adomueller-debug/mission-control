@@ -718,6 +718,40 @@ def test_completed_project_files_are_archived_and_previewed(
         assert sync.json()["status"] == "local"
 
 
+def test_project_can_be_archived_and_restored_with_active_run_cancelled(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Fehlerhaftes Projekt", "workspace": str(tmp_path)},
+        ).json()
+        task = client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={
+                "title": "Fehler analysieren",
+                "task_type": "coding",
+                "assigned_agent": "forge",
+            },
+        ).json()
+        started = client.post(f"/api/v1/project-tasks/{task['id']}/run", json={})
+        run_id = started.json()["run"]["id"]
+
+        archived = client.post(f"/api/v1/projects/{project['id']}/archive")
+        assert archived.status_code == 200
+        assert archived.json()["status"] == "archived"
+        assert archived.json()["autopilot_enabled"] is False
+        assert archived.json()["tasks"][0]["status"] == "cancelled"
+        cancelled_run = run_service.get(run_id)
+        assert cancelled_run is not None
+        assert cancelled_run["cancel_requested"] is True
+
+        restored = client.post(f"/api/v1/projects/{project['id']}/restore")
+        assert restored.status_code == 200
+        assert restored.json()["status"] == "paused"
+
+
 def test_workspace_rejects_parent_and_symlink_escape(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

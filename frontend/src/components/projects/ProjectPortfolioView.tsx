@@ -85,8 +85,9 @@ type Props = {
 export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectId, createRequest = 0, onOpenRun }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(initialProjectId ?? null);
-  const [portfolioMode, setPortfolioMode] = useState<"current" | "archived">("current");
+  const [portfolioMode, setPortfolioMode] = useState<"current" | "completed" | "archived">("current");
   const [showCreate, setShowCreate] = useState(false);
+  const [projectActionId, setProjectActionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,8 +95,9 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
     try {
       const result = await api<Project[]>("/api/v1/projects");
       setProjects(result);
-      if (initialProjectId && result.find((project) => project.id === initialProjectId)?.status === "archived") {
-        setPortfolioMode("archived");
+      const initialStatus = result.find((project) => project.id === initialProjectId)?.status;
+      if (initialStatus === "archived" || initialStatus === "completed") {
+        setPortfolioMode(initialStatus);
       }
       setError(null);
     } catch (reason) {
@@ -125,16 +127,17 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
   }, [createRequest]);
 
   const selected = projects.find((project) => project.id === selectedId) ?? null;
-  const currentProjects = projects.filter((project) => project.status !== "archived");
+  const currentProjects = projects.filter((project) => !["completed", "archived"].includes(project.status));
+  const completedProjects = projects.filter((project) => project.status === "completed");
   const archivedProjects = projects.filter((project) => project.status === "archived");
-  const visibleProjects = portfolioMode === "archived" ? archivedProjects : currentProjects;
+  const visibleProjects = portfolioMode === "archived" ? archivedProjects : portfolioMode === "completed" ? completedProjects : currentProjects;
   const operationalTasks = currentProjects.flatMap((project) => project.tasks.map((task) => ({ ...task, projectName: project.name })));
   const activeProjects = currentProjects.filter((project) => ["planning", "active"].includes(project.status)).length;
   const openTasks = operationalTasks.filter((task) => openStatuses.has(task.status)).length;
   const blockedTasks = operationalTasks.filter((task) => task.status === "blocked").length;
   const activeAssignments = operationalTasks.filter((task) => activeWorkStatuses.has(task.status) && task.assigned_agent);
 
-  function switchPortfolio(mode: "current" | "archived") {
+  function switchPortfolio(mode: "current" | "completed" | "archived") {
     setPortfolioMode(mode);
     setSelectedId(null);
     setShowCreate(false);
@@ -194,6 +197,33 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
     await load();
   }
 
+  async function archiveProject(project: Project) {
+    if (!window.confirm(`„${project.name}“ archivieren? Laufende Aufgaben werden dabei gestoppt.`)) return;
+    setProjectActionId(project.id);
+    try {
+      await api<Project>(`/api/v1/projects/${project.id}/archive`, { method: "POST" });
+      setPortfolioMode("archived");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Projekt konnte nicht archiviert werden");
+    } finally {
+      setProjectActionId(null);
+    }
+  }
+
+  async function restoreProject(project: Project) {
+    setProjectActionId(project.id);
+    try {
+      await api<Project>(`/api/v1/projects/${project.id}/restore`, { method: "POST" });
+      setPortfolioMode("current");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Projekt konnte nicht wiederhergestellt werden");
+    } finally {
+      setProjectActionId(null);
+    }
+  }
+
   return (
     <div className="mc-enter mt-7 space-y-5">
       {error && (
@@ -204,7 +234,7 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <PortfolioMetric label="Aktuelle Projekte" value={currentProjects.length} detail={`${activeProjects} in Planung oder aktiv`} icon={<FolderKanban size={17} />} />
-        <PortfolioMetric label="Offene Aufgaben" value={openTasks} detail="Archivierte Projekte ausgenommen" icon={<ListTodo size={17} />} />
+        <PortfolioMetric label="Offene Aufgaben" value={openTasks} detail="Nur aktuelle Projekte" icon={<ListTodo size={17} />} />
         <PortfolioMetric label="Agenten im Einsatz" value={new Set(activeAssignments.map((task) => task.assigned_agent)).size} detail="projektübergreifend" icon={<Bot size={17} />} />
         <PortfolioMetric label="Blockiert" value={blockedTasks} detail={blockedTasks ? "Handlungsbedarf" : "Keine Blocker"} icon={<TriangleAlert size={17} />} alert={blockedTasks > 0} />
       </section>
@@ -220,9 +250,10 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
               <Plus size={16} />
             </button>
           </div>
-          <div className="mc-segment mx-2 mt-2 grid grid-cols-2 rounded-xl p-1">
-            <button onClick={() => switchPortfolio("current")} className={`rounded-lg px-3 py-2 text-[11px] font-medium ${portfolioMode === "current" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}>Aktuell <span className="ml-1 text-slate-600">{currentProjects.length}</span></button>
-            <button onClick={() => switchPortfolio("archived")} className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-medium ${portfolioMode === "archived" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}><Archive size={12} /> Archiviert <span className="text-slate-600">{archivedProjects.length}</span></button>
+          <div className="mc-segment mx-2 mt-2 grid grid-cols-3 rounded-xl p-1">
+            <button onClick={() => switchPortfolio("current")} className={`rounded-lg px-1.5 py-2 text-[10px] font-medium ${portfolioMode === "current" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}>Aktuell <span className="ml-0.5 text-slate-600">{currentProjects.length}</span></button>
+            <button onClick={() => switchPortfolio("completed")} className={`flex items-center justify-center gap-1 rounded-lg px-1 py-2 text-[9px] font-medium ${portfolioMode === "completed" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}><CheckCircle2 size={10} /> Abgeschlossen <span className="text-slate-600">{completedProjects.length}</span></button>
+            <button onClick={() => switchPortfolio("archived")} className={`flex items-center justify-center gap-1 rounded-lg px-1 py-2 text-[9px] font-medium ${portfolioMode === "archived" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}><Archive size={10} /> Archiviert <span className="text-slate-600">{archivedProjects.length}</span></button>
           </div>
           {showCreate && <CreateProjectForm agents={agents.filter((agent) => !agent.specialist)} onSubmit={createProject} />}
           <div className="mt-2 space-y-2">
@@ -239,7 +270,7 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
                 {project.status === "archived" ? <p className="mt-2 flex items-center gap-1.5 text-[10px] text-slate-700"><Archive size={10} /> Keine aktiven Aufgaben</p> : <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600"><span>{project.tasks.filter((task) => openStatuses.has(task.status)).length} offen</span><span>{project.active_agents.length} Agenten</span></div>}
               </button>
             ))}
-            {!loading && visibleProjects.length === 0 && (portfolioMode === "archived" ? <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-10 text-center"><Archive size={18} className="mx-auto text-slate-700" /><p className="mt-2 text-xs text-slate-600">Noch keine archivierten Projekte</p></div> : <EmptyPortfolio onCreate={() => setShowCreate(true)} />)}
+            {!loading && visibleProjects.length === 0 && (portfolioMode === "archived" ? <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-10 text-center"><Archive size={18} className="mx-auto text-slate-700" /><p className="mt-2 text-xs text-slate-600">Noch keine archivierten Projekte</p></div> : portfolioMode === "completed" ? <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-10 text-center"><CheckCircle2 size={18} className="mx-auto text-slate-700" /><p className="mt-2 text-xs text-slate-600">Noch keine abgeschlossenen Projekte</p></div> : <EmptyPortfolio onCreate={() => setShowCreate(true)} />)}
           </div>
         </div>
 
@@ -261,12 +292,13 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-lg border border-white/[0.07] bg-white/[0.03] px-2.5 py-1.5 text-xs text-slate-400">{projectStatusLabel[selected.status]}</span>
-                  <button onClick={() => void toggleAutopilot(selected)} className={`mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs ${selected.autopilot_enabled ? "text-emerald-300" : "text-slate-500"}`}>
+                  {!["completed", "archived"].includes(selected.status) && <button onClick={() => void toggleAutopilot(selected)} className={`mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs ${selected.autopilot_enabled ? "text-emerald-300" : "text-slate-500"}`}>
                     {selected.autopilot_enabled ? <Pause size={12} /> : <Play size={12} />} {selected.autopilot_enabled ? "Autopilot aktiv" : selected.tasks.some((task) => task.status === "blocked") ? "Autopilot fortsetzen" : "Autopilot starten"}
-                  </button>
+                  </button>}
+                  {selected.status !== "archived" && <button disabled={projectActionId === selected.id} onClick={() => void archiveProject(selected)} className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 hover:text-amber-200"><Archive size={12} /> {projectActionId === selected.id ? "Archiviere…" : "Archivieren"}</button>}
                 </div>
               </div>
-              {selected.status === "archived" ? <><ArchivedProjectSummary project={selected} /><ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} onRefresh={load} /></> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} onRefresh={load} /><TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
+              {selected.status === "archived" ? <><ArchivedProjectSummary project={selected} restoring={projectActionId === selected.id} onRestore={() => restoreProject(selected)} /><ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} onRefresh={load} /></> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} onRefresh={load} /><TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
             </>
           ) : (
             <div className="grid min-h-[500px] place-items-center px-6 text-center"><div><FolderKanban size={26} className="mx-auto text-slate-700" /><p className="mt-3 text-sm font-medium text-slate-400">Wähle ein Projekt</p><p className="mt-1 max-w-sm text-xs leading-5 text-slate-600">Details, Briefing und Aufgaben werden erst geöffnet, wenn du ein Projekt auswählst.</p></div></div>
@@ -285,9 +317,9 @@ function AutopilotStatus({ project, agents }: { project: Project; agents: AgentP
   return <div className="mt-5 flex items-center gap-3 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.035] p-4"><div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-300/10 text-emerald-300"><Bot size={16} /></div><div className="min-w-0 flex-1"><p className="text-sm font-medium text-emerald-100">BOSS Autopilot orchestriert dieses Projekt</p><p className="mt-1 truncate text-[11px] text-slate-500">{current ? `${agent?.name ?? current.assigned_agent ?? "Agent"}: ${current.title}` : "Die nächste abhängige Aufgabe wird automatisch gestartet."}</p></div><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /></div>;
 }
 
-function ArchivedProjectSummary({ project }: { project: Project }) {
+function ArchivedProjectSummary({ project, restoring, onRestore }: { project: Project; restoring: boolean; onRestore: () => Promise<void> }) {
   const completed = project.tasks.filter((task) => task.status === "completed").length;
-  return <div className="mt-5 rounded-2xl border border-white/[0.06] bg-black/10 p-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.04] text-slate-500"><Archive size={16} /></div><div><p className="text-sm font-medium text-slate-300">Projekt ist archiviert</p><p className="mt-1 text-xs leading-5 text-slate-600">Seine {project.tasks.length} Aufgaben werden nicht als offen gezählt und belegen keine Agenten. {completed} Aufgaben waren beim Archivieren abgeschlossen.</p></div></div><button className="mt-4 flex items-center gap-2 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-slate-500" disabled><RotateCcw size={12} /> Wiederherstellung folgt</button></div>;
+  return <div className="mt-5 rounded-2xl border border-white/[0.06] bg-black/10 p-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.04] text-slate-500"><Archive size={16} /></div><div><p className="text-sm font-medium text-slate-300">Projekt ist archiviert</p><p className="mt-1 text-xs leading-5 text-slate-600">Seine {project.tasks.length} Aufgaben werden nicht als offen gezählt und belegen keine Agenten. {completed} Aufgaben waren beim Archivieren abgeschlossen.</p></div></div><button onClick={() => void onRestore()} className="mc-button mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] text-slate-400" disabled={restoring}><RotateCcw size={12} className={restoring ? "animate-spin" : ""} /> {restoring ? "Wird wiederhergestellt…" : "Wiederherstellen"}</button></div>;
 }
 
 type ResultArtifact = { title: string; content: string; artifact_type?: string };

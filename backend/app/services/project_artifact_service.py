@@ -6,6 +6,8 @@ import mimetypes
 import os
 import re
 import shutil
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,27 @@ from backend.app.models.run import AgentRun
 
 
 MAX_SYNC_BYTES = 20 * 1024 * 1024
+PREVIEW_MEDIA_TYPES = {
+    "application/json",
+    "application/pdf",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/svg+xml",
+    "image/webp",
+    "text/css",
+    "text/html",
+    "text/javascript",
+    "text/markdown",
+    "text/plain",
+}
+
+
+def _drive_delivery_configured() -> bool:
+    return bool(
+        os.getenv("GOOGLE_DRIVE_PROJECTS_FOLDER_ID", "").strip()
+        and os.getenv("N8N_PROJECT_DELIVERY_WEBHOOK_URL", "").strip()
+    )
 
 
 def artifact_to_dict(artifact: ProjectArtifact) -> dict[str, Any]:
@@ -33,7 +56,12 @@ def artifact_to_dict(artifact: ProjectArtifact) -> dict[str, Any]:
         "size_bytes": artifact.size_bytes,
         "sync_status": artifact.sync_status,
         "external_url": artifact.external_url or None,
-        "preview_available": artifact.artifact_type == "website",
+        "preview_available": (
+            artifact.artifact_type == "website"
+            or artifact.media_type in PREVIEW_MEDIA_TYPES
+            or artifact.media_type.startswith("text/")
+        ),
+        "preview_kind": "website" if artifact.artifact_type == "website" else "document",
         "created_at": artifact.created_at.isoformat(),
     }
 
@@ -51,6 +79,10 @@ def _artifact_root() -> Path:
 
 
 class ProjectArtifactService:
+    def __init__(self) -> None:
+        self._syncing: set[str] = set()
+        self._sync_lock = threading.Lock()
+
     def archive_completed_task(
         self,
         db,
@@ -102,7 +134,7 @@ class ProjectArtifactService:
                     media_type=mimetypes.guess_type(target.name)[0]
                     or "application/octet-stream",
                     size_bytes=target.stat().st_size,
-                    sync_status="pending" if os.getenv("GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID") else "local",
+                    sync_status="pending" if _drive_delivery_configured() else "local",
                 )
             )
 
@@ -122,7 +154,7 @@ class ProjectArtifactService:
                     entry_path=target.name,
                     media_type="text/html",
                     size_bytes=sum(file.stat().st_size for _, file in copied_files),
-                    sync_status="pending" if os.getenv("GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID") else "local",
+                    sync_status="pending" if _drive_delivery_configured() else "local",
                 ),
             )
 
@@ -145,7 +177,7 @@ class ProjectArtifactService:
                     storage_path=str(target),
                     media_type="text/markdown",
                     size_bytes=target.stat().st_size,
-                    sync_status="pending" if os.getenv("GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID") else "local",
+                    sync_status="pending" if _drive_delivery_configured() else "local",
                 )
             )
 
@@ -174,7 +206,7 @@ class ProjectArtifactService:
                 storage_path=str(manifest),
                 media_type="application/json",
                 size_bytes=manifest.stat().st_size,
-                sync_status="pending" if os.getenv("GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID") else "local",
+                sync_status="pending" if _drive_delivery_configured() else "local",
             )
         )
         db.add_all(artifacts)
@@ -203,18 +235,30 @@ class ProjectArtifactService:
             project = db.get(Project, project_id)
             if project is None:
                 raise KeyError(project_id)
-            artifacts = db.scalars(
+            artifacts = list(db.scalars(
                 select(ProjectArtifact).where(ProjectArtifact.project_id == project_id)
-            ).all()
+            ).all())
             if not webhook:
                 return {
                     "status": "local",
                     "artifact_count": len(artifacts),
                     "message": "Lokal gesichert; n8n-Drive-Webhook ist noch nicht konfiguriert.",
                 }
+            pending_artifacts = [
+                artifact for artifact in artifacts if artifact.sync_status != "synced"
+            ]
+            if not pending_artifacts:
+                return {
+                    "status": "synced",
+                    "artifact_count": len(artifacts),
+                    "message": "Alle Ergebnisse sind bereits in Google Drive gesichert.",
+                }
+            project.delivery_status = "syncing"
+            project.delivery_error = ""
+            db.commit()
             payload_artifacts = []
             total_bytes = 0
-            for artifact in artifacts:
+            for artifact in pending_artifacts:
                 path = Path(artifact.storage_path)
                 if not path.is_file() or artifact.artifact_type == "website":
                     continue
@@ -226,6 +270,7 @@ class ProjectArtifactService:
                         "id": artifact.id,
                         "key": artifact.id,
                         "name": artifact.name,
+                        "artifact_type": artifact.artifact_type,
                         "media_type": artifact.media_type,
                         "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
                     }
@@ -234,22 +279,74 @@ class ProjectArtifactService:
                 webhook,
                 json={
                     "project": {"id": project.id, "name": project.name, "goal": project.goal},
-                    "root_folder_id": os.getenv("GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID", ""),
+                    "root_folder_id": os.getenv("GOOGLE_DRIVE_PROJECTS_FOLDER_ID", ""),
                     "spreadsheet_id": os.getenv("GOOGLE_SHEETS_CRM_SPREADSHEET_ID", ""),
+                    "folders": {
+                        "project": project.drive_project_folder_id,
+                        "crm": project.drive_crm_folder_id,
+                        "websites": project.drive_websites_folder_id,
+                        "results": project.drive_results_folder_id,
+                    },
                     "artifacts": payload_artifacts,
                 },
-                timeout=(5, 60),
+                timeout=(5, 180),
             )
             response.raise_for_status()
             data = response.json() if response.content else {}
             if not isinstance(data, dict) or data.get("status") != "synced":
                 raise ValueError("n8n hat die Projektlieferung nicht bestätigt.")
             links = data.get("artifact_urls", {}) if isinstance(data, dict) else {}
-            for artifact in artifacts:
+            folders = data.get("folders", {}) if isinstance(data, dict) else {}
+            project.drive_project_folder_id = str(folders.get("project", ""))
+            project.drive_crm_folder_id = str(folders.get("crm", ""))
+            project.drive_websites_folder_id = str(folders.get("websites", ""))
+            project.drive_results_folder_id = str(folders.get("results", ""))
+            project.drive_url = str(data.get("project_url", ""))
+            project.delivery_status = "synced"
+            project.delivery_error = ""
+            project.delivery_synced_at = datetime.now(UTC)
+            for artifact in pending_artifacts:
                 artifact.sync_status = "synced"
-                artifact.external_url = str(links.get(artifact.id, ""))
+                artifact.external_url = str(
+                    links.get(artifact.id, "")
+                    or (
+                        data.get("websites_url", "")
+                        if artifact.artifact_type == "website"
+                        else ""
+                    )
+                )
             db.commit()
             return {"status": "synced", "artifact_count": len(artifacts)}
+
+    def schedule_sync(self, project_id: str) -> bool:
+        if not os.getenv("N8N_PROJECT_DELIVERY_WEBHOOK_URL", "").strip():
+            return False
+        with self._sync_lock:
+            if project_id in self._syncing:
+                return False
+            self._syncing.add(project_id)
+        thread = threading.Thread(
+            target=self._sync_background,
+            args=(project_id,),
+            daemon=True,
+            name=f"project-delivery-{project_id[:8]}",
+        )
+        thread.start()
+        return True
+
+    def _sync_background(self, project_id: str) -> None:
+        try:
+            self.sync_project(project_id)
+        except (OSError, ValueError, requests.RequestException) as exc:
+            with SessionLocal() as db:
+                project = db.get(Project, project_id)
+                if project is not None:
+                    project.delivery_status = "failed"
+                    project.delivery_error = str(exc)[:1_000]
+                    db.commit()
+        finally:
+            with self._sync_lock:
+                self._syncing.discard(project_id)
 
 
 project_artifact_service = ProjectArtifactService()

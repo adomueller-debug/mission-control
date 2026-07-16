@@ -7,7 +7,6 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-import requests
 from sqlalchemy import select
 
 from backend.app.core.workspace_security import resolve_workspace
@@ -86,6 +85,11 @@ def _project_dict(
     relevant = [task for task in tasks if task.status != "cancelled"]
     completed = counts["completed"]
     progress = round((completed / len(relevant)) * 100) if relevant else 0
+    artifact_rows = artifacts or []
+    synced_artifacts = sum(item.sync_status == "synced" for item in artifact_rows)
+    delivery_progress = (
+        round((synced_artifacts / len(artifact_rows)) * 100) if artifact_rows else 0
+    )
     active_agents = sorted(
         {
             task.assigned_agent
@@ -107,13 +111,20 @@ def _project_dict(
         "budget_cents": project.budget_cents,
         "revenue_target_cents": project.revenue_target_cents,
         "autopilot_enabled": project.autopilot_enabled,
+        "delivery_status": project.delivery_status,
+        "delivery_error": project.delivery_error,
+        "delivery_progress": delivery_progress,
+        "delivery_synced": synced_artifacts,
+        "delivery_total": len(artifact_rows),
+        "delivery_synced_at": _iso(project.delivery_synced_at),
+        "drive_url": project.drive_url or None,
         "created_at": _iso(project.created_at),
         "updated_at": _iso(project.updated_at),
         "progress": progress,
         "task_counts": dict(counts),
         "active_agents": active_agents,
         "tasks": [_task_dict(task) for task in tasks],
-        "artifacts": [artifact_to_dict(item) for item in artifacts or []],
+        "artifacts": [artifact_to_dict(item) for item in artifact_rows],
     }
 
 
@@ -517,12 +528,7 @@ class ProjectService:
                         project_id,
                         {"status": "completed", "autopilot_enabled": False},
                     )
-                    try:
-                        project_artifact_service.sync_project(project_id)
-                    except (OSError, ValueError, requests.RequestException):
-                        # Local persistence is authoritative. External Drive sync can
-                        # be retried from the dashboard without failing the project.
-                        pass
+                    project_artifact_service.schedule_sync(project_id)
                     return
 
                 completed_ids = {
@@ -558,6 +564,7 @@ class ProjectService:
             select(ProjectTask).where(ProjectTask.run_id.is_not(None))
         ).all()
         changed = False
+        sync_projects: set[str] = set()
         for task in tasks:
             run = db.get(AgentRun, task.run_id)
             if run is None:
@@ -579,8 +586,12 @@ class ProjectService:
                         db, project, task, run
                     )
                     changed = changed or created
+                    if created:
+                        sync_projects.add(project.id)
         if changed:
             db.commit()
+        for project_id in sync_projects:
+            project_artifact_service.schedule_sync(project_id)
 
     @staticmethod
     def _validate_project_status(status: str) -> None:

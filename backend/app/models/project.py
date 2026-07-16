@@ -34,6 +34,16 @@ class Project(Base):
     budget_cents: Mapped[int] = mapped_column(Integer, default=0)
     revenue_target_cents: Mapped[int] = mapped_column(Integer, default=0)
     autopilot_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    delivery_status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    delivery_error: Mapped[str] = mapped_column(Text, default="")
+    drive_url: Mapped[str] = mapped_column(Text, default="")
+    drive_project_folder_id: Mapped[str] = mapped_column(Text, default="")
+    drive_crm_folder_id: Mapped[str] = mapped_column(Text, default="")
+    drive_websites_folder_id: Mapped[str] = mapped_column(Text, default="")
+    drive_results_folder_id: Mapped[str] = mapped_column(Text, default="")
+    delivery_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
     )

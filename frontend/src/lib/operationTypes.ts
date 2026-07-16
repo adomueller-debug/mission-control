@@ -17,6 +17,7 @@ export type OperationIntakeResponse = {
   status: "needs_input" | "run_created" | "project_created";
   route: OperationRoute;
   message?: string;
+  phase?: "planning" | "running" | "completed";
   questions?: OperationQuestion[];
   run?: AgentRun;
   project_id?: string;

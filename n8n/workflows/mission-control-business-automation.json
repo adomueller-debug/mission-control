@@ -1,0 +1,1965 @@
+{
+  "name": "Mission Control – Business Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control-website-sales",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000001",
+      "name": "Mission Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -760,
+        0
+      ],
+      "webhookId": "mission-control-website-sales"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst data = {\n  project_id: input.project_id,\n  mission_plan_id: input.mission_plan_id,\n  task_count: Number(input.task_count || 0),\n  goal: input.goal || 'Mit dem Verkauf moderner Websites an lokale Unternehmen Umsatz erzielen',\n  city: input.city || 'Heidelberg',\n  target_revenue: Number(input.target_revenue || 500),\n  preferred_industries: input.preferred_industries || 'Alle Branchen, die lokal über eine Website Kunden gewinnen können; dynamisch nach Bedarf, Website-Defizit, Kontaktierbarkeit und Auftragswert priorisieren',\n  website_style: input.website_style || 'minimalistisch, modern und clean',\n  color_direction: input.color_direction || 'modern, minimalistisch und clean; unternehmensspezifisch',\n  animation_style: input.animation_style || 'sehr dynamisch und cineastisch mit scrollgebundenen Szenen, maskierten Übergängen und Parallax; Reduced-Motion- und Mobile-Fallback vorsehen',\n  key_sections: input.key_sections || 'Unternehmensspezifisch aus Google Maps, bestehender Website und weiteren öffentlichen Informationen ableiten',\n  offer_price: Number(input.offer_price || 350),\n  offer_min: Number(input.offer_min || 200),\n  offer_max: Number(input.offer_max || 500),\n  max_leads: Math.min(Number(input.max_leads || 20), 20),\n  outreach_channel: input.outreach_channel || 'E-Mail-Entwurf',\n  outreach_approval: false,\n  crm_spreadsheet_id: input.crm_spreadsheet_id || '1uCKDobkcfjjOOmRUGeUVCwtAW5ddw49Smo7nWz9hysY',\n  reference_folder_id: input.reference_folder_id || '1O-oENk03wkd6DcnWBVeiKBGocb4MQ5VL',\n  reference_video_ids: input.reference_video_ids || ['1xRcjUjZmaCYzU0-5dKdAAfzimvIssImn', '1UjVzKF4wIWt1eMBBxlguh_EoOwKPaWwv'],\n};\nconst required = ['preferred_industries', 'website_style', 'animation_style', 'key_sections', 'outreach_channel'];\nconst missing = required.filter((key) => !data[key]);\nconst questionMap = {\n  preferred_industries: 'Welche Branchen sollen priorisiert werden?',\n  website_style: 'Wie soll die Website wirken?',\n  animation_style: 'Wie intensiv sollen Scroll-Animationen sein?',\n  key_sections: 'Welche Bereiche soll die Website enthalten?',\n  outreach_channel: 'Welcher Kontaktkanal ist erlaubt?',\n};\nconst questions = missing.map((key) => ({ field: key, question: questionMap[key] }));\nconst missionGoal = `${data.goal}. Region: ${data.city}. Zielumsatz: ${data.target_revenue} EUR, ohne Umsatzgarantie. Branchenoffen nach Kundengewinnungspotenzial priorisieren: ${data.preferred_industries}. Website-Stil: ${data.website_style}; Farbwelt: ${data.color_direction}; Scroll-Animationen: ${data.animation_style}. Bereiche: ${data.key_sections}. Starterangebot: ${data.offer_min}-${data.offer_max} EUR, Richtwert ${data.offer_price} EUR. Maximal ${data.max_leads} sorgfältig qualifizierte Leads. Kontaktkanal: ${data.outreach_channel}; niemals automatisch versenden. Designreferenzen: Drive-Ordner ${data.reference_folder_id}, Videos ${data.reference_video_ids.join(', ')}. Datenschutz, Impressum, Quellen, Opt-out und Audit-Trail beachten.`;\nreturn [{ json: { ready: missing.length === 0, questions, data, mission_goal: missionGoal } }];"
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000002",
+      "name": "Normalize Mission & Build Questions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "mission-ready-condition",
+              "leftValue": "={{ $json.ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000003",
+      "name": "Requirements Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'needs_input', message: 'Bitte beantworte die Rückfragen, bevor BOSS das Projekt startet.', questions: $json.questions, defaults: { city: $json.data.city, target_revenue: $json.data.target_revenue, max_leads: $json.data.max_leads } }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000004",
+      "name": "Return Clarifying Questions",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -20,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'project_created', message: 'Mission läuft bereits in Mission Control.', project_id: $('Normalize Mission & Build Questions').first().json.data.project_id, mission_plan_id: $('Normalize Mission & Build Questions').first().json.data.mission_plan_id, task_count: $('Normalize Mission & Build Questions').first().json.data.task_count, research_status: 'queued' }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000008",
+      "name": "Return Mission Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1280,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1uCKDobkcfjjOOmRUGeUVCwtAW5ddw49Smo7nWz9hysY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Aktivitäten",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Aktivitäts-ID": "={{ 'MISSION-' + $('Normalize Mission & Build Questions').first().json.data.project_id }}",
+            "Lead-ID": "",
+            "Zeitpunkt": "={{ $now.toISO() }}",
+            "Typ": "Mission gestartet",
+            "Kanal": "Intern",
+            "Agent": "BOSS / FLOW",
+            "Zusammenfassung": "={{ $('Normalize Mission & Build Questions').first().json.mission_goal }}",
+            "Ergebnis": "Projekt angenommen und Aufgaben durch BOSS delegiert",
+            "Nächste Aktion": "Agenten arbeiten; Ergebnisse werden automatisch synchronisiert",
+            "Freigabe erforderlich": "Ja – E-Mails nur als Entwurf"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Aktivitäts-ID",
+              "displayName": "Aktivitäts-ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead-ID",
+              "displayName": "Lead-ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Zeitpunkt",
+              "displayName": "Zeitpunkt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Typ",
+              "displayName": "Typ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kanal",
+              "displayName": "Kanal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Agent",
+              "displayName": "Agent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Zusammenfassung",
+              "displayName": "Zusammenfassung",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Ergebnis",
+              "displayName": "Ergebnis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Nächste Aktion",
+              "displayName": "Nächste Aktion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Freigabe erforderlich",
+              "displayName": "Freigabe erforderlich",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000009",
+      "name": "Log Mission in Google Sheets CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        760,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "__GOOGLE_SHEETS_CREDENTIAL_ID__",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/v1/sales/website-pipeline/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ city: $('Normalize Mission & Build Questions').first().json.data.city, max_leads: $('Normalize Mission & Build Questions').first().json.data.max_leads }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000010",
+      "name": "Research Leads & Create Drafts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control-sales-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "sales-lead-webhook",
+      "name": "Receive Qualified Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -620,
+        0
+      ],
+      "webhookId": "mission-control-sales-lead"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nif (input.send === true) throw new Error('Automatischer E-Mail-Versand ist gesperrt.');\nif (!input.lead?.id || !input.lead?.name) throw new Error('Lead ist unvollständig.');\nif (!input.draft?.to || !input.draft?.subject || !input.draft?.body) throw new Error('E-Mail-Entwurf ist unvollständig.');\nreturn [{ json: { ...input, send: false, approval_status: 'pending' } }];"
+      },
+      "id": "validate-draft-only",
+      "name": "Enforce Draft Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -390,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1uCKDobkcfjjOOmRUGeUVCwtAW5ddw49Smo7nWz9hysY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead-ID": "={{ $json.lead.id }}",
+            "Unternehmen": "={{ $json.lead.name }}",
+            "Branche": "={{ $json.lead.category }}",
+            "Stadt": "={{ $json.lead.city }}",
+            "Website": "={{ $json.lead.website }}",
+            "Website-Qualität": "={{ !$json.lead.website ? 'Keine Website' : ($json.lead.website_score < 40 ? 'Schlecht' : ($json.lead.website_score < 60 ? 'Veraltet' : ($json.lead.website_score < 80 ? 'Akzeptabel' : 'Gut'))) }}",
+            "Score": "={{ $json.lead.opportunity_score }}",
+            "Ansprechpartner": "",
+            "E-Mail": "={{ $json.lead.email }}",
+            "Telefon": "",
+            "Quelle": "OpenStreetMap",
+            "Status": "Kontakt vorbereitet",
+            "Zugewiesener Agent": "FLOW",
+            "Nächste Aktion": "Entwurf prüfen und freigeben",
+            "Kontaktfreigabe": "Nur Entwurf",
+            "Angebotswert EUR": 350,
+            "Opt-out": "Nein",
+            "Notizen": "={{ [$json.lead.address, ...$json.lead.reasons].filter(Boolean).join('; ') }}",
+            "Quell-URL": "={{ $json.lead.source_url }}",
+            "Erstellt am": "={{ $now }}",
+            "Aktualisiert am": "={{ $now }}"
+          },
+          "matchingColumns": [
+            "Lead-ID"
+          ],
+          "schema": [
+            {
+              "id": "Lead-ID",
+              "displayName": "Lead-ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Unternehmen",
+              "displayName": "Unternehmen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Branche",
+              "displayName": "Branche",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Stadt",
+              "displayName": "Stadt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Website",
+              "displayName": "Website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Website-Qualität",
+              "displayName": "Website-Qualität",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Ansprechpartner",
+              "displayName": "Ansprechpartner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "E-Mail",
+              "displayName": "E-Mail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Telefon",
+              "displayName": "Telefon",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quelle",
+              "displayName": "Quelle",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Zugewiesener Agent",
+              "displayName": "Zugewiesener Agent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Letzter Kontakt",
+              "displayName": "Letzter Kontakt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Nächste Aktion",
+              "displayName": "Nächste Aktion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Wiedervorlage",
+              "displayName": "Wiedervorlage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "date",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kontaktfreigabe",
+              "displayName": "Kontaktfreigabe",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Angebotswert EUR",
+              "displayName": "Angebotswert EUR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Opt-out",
+              "displayName": "Opt-out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notizen",
+              "displayName": "Notizen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quell-URL",
+              "displayName": "Quell-URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Erstellt am",
+              "displayName": "Erstellt am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Aktualisiert am",
+              "displayName": "Aktualisiert am",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "append-crm-lead",
+      "name": "Append Lead to CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -130,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "__GOOGLE_SHEETS_CREDENTIAL_ID__",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $('Enforce Draft Only').first().json.draft.subject }}",
+        "emailType": "text",
+        "message": "={{ $('Enforce Draft Only').first().json.draft.body }}",
+        "options": {
+          "sendTo": "={{ $('Enforce Draft Only').first().json.draft.to }}"
+        }
+      },
+      "id": "create-gmail-draft",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        130,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "__GMAIL_CREDENTIAL_ID__",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ crm_logged: true, draft_created: true, draft_id: $json.id || null, sent: false, approval_status: 'pending' }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "return-draft-status",
+      "name": "Return Approval Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        390,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control-project-delivery",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "delivery-webhook",
+      "name": "Project Delivery Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -600,
+        0
+      ],
+      "webhookId": "mission-control-project-delivery"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "name",
+        "queryString": "={{ $('Project Delivery Webhook').first().json.body.project.name }}",
+        "returnAll": false,
+        "limit": 20,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Project Delivery Webhook').first().json.body.root_folder_id }}"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "id": "delivery-search-project",
+      "name": "Search Project Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -420,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Project Delivery Webhook').first().json.body;\nconst matches = $input.all().filter(item => item.json?.id);\nconst name = $('Project Delivery Webhook').first().json.body.project.name;\nconst exact = matches.find(item => item.json.name === name);\nconst configured = context.folders?.project || '';\nreturn [{ json: { ...context, folder_id: configured || exact?.json.id || '', folder_name: name } }];"
+      },
+      "id": "delivery-select-project",
+      "name": "Select Project Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery-project-exists",
+              "leftValue": "={{ Boolean($json.folder_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "delivery-if-project",
+      "name": "Project Folder Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        20,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.folder_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Project Delivery Webhook').first().json.body.root_folder_id }}"
+        },
+        "options": {}
+      },
+      "id": "delivery-create-project",
+      "name": "Create Project Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        240,
+        520
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Select Project Folder').first().json;\nconst folderId = $json.id || context.folder_id;\nreturn [{ json: { ...context, folders: { ...(context.folders || {}), project: folderId } } }];"
+      },
+      "id": "delivery-finalize-project",
+      "name": "Finalize Project Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "name",
+        "queryString": "CRM & Leads",
+        "returnAll": false,
+        "limit": 20,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Finalize Project Folder').first().json.folders.project }}"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "id": "delivery-search-crm",
+      "name": "Search CRM & Leads Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        740,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Finalize Project Folder').first().json;\nconst matches = $input.all().filter(item => item.json?.id);\nconst name = \"CRM & Leads\";\nconst exact = matches.find(item => item.json.name === name);\nconst configured = context.folders?.crm || '';\nreturn [{ json: { ...context, folder_id: configured || exact?.json.id || '', folder_name: name } }];"
+      },
+      "id": "delivery-select-crm",
+      "name": "Select CRM & Leads Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery-crm-exists",
+              "leftValue": "={{ Boolean($json.folder_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "delivery-if-crm",
+      "name": "CRM & Leads Folder Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1180,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.folder_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Finalize Project Folder').first().json.folders.project }}"
+        },
+        "options": {}
+      },
+      "id": "delivery-create-crm",
+      "name": "Create CRM & Leads Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1400,
+        520
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Select CRM & Leads Folder').first().json;\nconst folderId = $json.id || context.folder_id;\nreturn [{ json: { ...context, folders: { ...(context.folders || {}), crm: folderId } } }];"
+      },
+      "id": "delivery-finalize-crm",
+      "name": "Finalize CRM & Leads Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "name",
+        "queryString": "Websites & Angebote",
+        "returnAll": false,
+        "limit": 20,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Finalize Project Folder').first().json.folders.project }}"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "id": "delivery-search-websites",
+      "name": "Search Websites & Angebote Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1900,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Finalize CRM & Leads Folder').first().json;\nconst matches = $input.all().filter(item => item.json?.id);\nconst name = \"Websites & Angebote\";\nconst exact = matches.find(item => item.json.name === name);\nconst configured = context.folders?.websites || '';\nreturn [{ json: { ...context, folder_id: configured || exact?.json.id || '', folder_name: name } }];"
+      },
+      "id": "delivery-select-websites",
+      "name": "Select Websites & Angebote Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2120,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery-websites-exists",
+              "leftValue": "={{ Boolean($json.folder_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "delivery-if-websites",
+      "name": "Websites & Angebote Folder Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2340,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.folder_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Finalize Project Folder').first().json.folders.project }}"
+        },
+        "options": {}
+      },
+      "id": "delivery-create-websites",
+      "name": "Create Websites & Angebote Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2560,
+        520
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Select Websites & Angebote Folder').first().json;\nconst folderId = $json.id || context.folder_id;\nreturn [{ json: { ...context, folders: { ...(context.folders || {}), websites: folderId } } }];"
+      },
+      "id": "delivery-finalize-websites",
+      "name": "Finalize Websites & Angebote Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2780,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "name",
+        "queryString": "Berichte & Ergebnisse",
+        "returnAll": false,
+        "limit": 20,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Finalize Project Folder').first().json.folders.project }}"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "id": "delivery-search-results",
+      "name": "Search Berichte & Ergebnisse Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3060,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Finalize Websites & Angebote Folder').first().json;\nconst matches = $input.all().filter(item => item.json?.id);\nconst name = \"Berichte & Ergebnisse\";\nconst exact = matches.find(item => item.json.name === name);\nconst configured = context.folders?.results || '';\nreturn [{ json: { ...context, folder_id: configured || exact?.json.id || '', folder_name: name } }];"
+      },
+      "id": "delivery-select-results",
+      "name": "Select Berichte & Ergebnisse Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery-results-exists",
+              "leftValue": "={{ Boolean($json.folder_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "delivery-if-results",
+      "name": "Berichte & Ergebnisse Folder Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3500,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.folder_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Finalize Project Folder').first().json.folders.project }}"
+        },
+        "options": {}
+      },
+      "id": "delivery-create-results",
+      "name": "Create Berichte & Ergebnisse Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3720,
+        520
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Select Berichte & Ergebnisse Folder').first().json;\nconst folderId = $json.id || context.folder_id;\nreturn [{ json: { ...context, folders: { ...(context.folders || {}), results: folderId } } }];"
+      },
+      "id": "delivery-finalize-results",
+      "name": "Finalize Berichte & Ergebnisse Folder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3940,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "name",
+        "queryString": "={{ 'Leads – ' + $('Project Delivery Webhook').first().json.body.project.name }}",
+        "returnAll": false,
+        "limit": 20,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ $('Finalize Berichte & Ergebnisse Folder').first().json.folders.crm }}"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "id": "delivery-search-crm-sheet",
+      "name": "Search Project CRM Sheet",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        4220,
+        420
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Finalize Berichte & Ergebnisse Folder').first().json;\nconst name = `Leads – ${context.project.name}`;\nconst exact = $input.all().find(item => item.json?.id && item.json.name === name);\nreturn [{ json: { ...context, crm_sheet_id: exact?.json.id || '', crm_sheet_name: name } }];"
+      },
+      "id": "delivery-select-crm-sheet",
+      "name": "Select Project CRM Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4440,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery-crm-sheet-exists",
+              "leftValue": "={{ Boolean($json.crm_sheet_id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "delivery-if-crm-sheet",
+      "name": "Project CRM Sheet Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4660,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.spreadsheet_id }}"
+        },
+        "name": "={{ $json.crm_sheet_name }}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.folders.crm }}"
+        },
+        "options": {
+          "description": "Automatisch erzeugter CRM-Stand für dieses Mission-Control-Projekt."
+        }
+      },
+      "id": "delivery-copy-crm-sheet",
+      "name": "Copy CRM Sheet to Project",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        4880,
+        520
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Select Project CRM Sheet').first().json;\nconst id = $json.id || context.crm_sheet_id;\nreturn [{ json: { ...context, crm_sheet_id: id, crm_sheet_url: id ? `https://docs.google.com/spreadsheets/d/${id}` : '' } }];"
+      },
+      "id": "delivery-finalize-crm-sheet",
+      "name": "Finalize Project CRM Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5100,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Finalize Project CRM Sheet').first().json;\nconst artifacts = Array.isArray(input.artifacts) ? input.artifacts : [];\nreturn artifacts.map((artifact) => {\n  const text = `${artifact.name} ${artifact.artifact_type} ${artifact.media_type}`.toLowerCase();\n  let bucket = 'results';\n  if (/lead|crm|kontakt|e-mail|email/.test(text)) bucket = 'crm';\n  else if (/website|angebot|html|css|javascript|typescript/.test(text)) bucket = 'websites';\n  return {\n    json: { artifact_key: artifact.key, artifact_name: artifact.name, project: input.project, spreadsheet_id: input.spreadsheet_id, folders: input.folders, target_folder_id: input.folders[bucket] },\n    binary: { data: { data: artifact.content_base64, mimeType: artifact.media_type || 'application/octet-stream', fileName: artifact.name } },\n    pairedItem: { item: 0 }\n  };\n});"
+      },
+      "id": "delivery-prepare-files",
+      "name": "Prepare Routed Delivery Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5340,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "inputDataFieldName": "data",
+        "name": "={{ $binary.data.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.target_folder_id }}"
+        },
+        "options": {}
+      },
+      "id": "delivery-upload-routed",
+      "name": "Upload Routed Artifacts",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        5580,
+        420
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const uploaded = $input.all();\nconst source = $('Prepare Routed Delivery Files').all();\nconst context = $('Finalize Project CRM Sheet').first().json;\nconst artifactUrls = {};\nfor (let i = 0; i < uploaded.length; i++) { const key = source[i]?.json.artifact_key; const id = uploaded[i]?.json.id; if (key && id) artifactUrls[key] = `https://drive.google.com/open?id=${id}`; }\nreturn [{ json: { status: 'synced', project: context.project, spreadsheet_id: context.spreadsheet_id, crm_sheet_url: context.crm_sheet_url, artifact_count: uploaded.length, artifact_urls: artifactUrls, folders: context.folders, project_url: `https://drive.google.com/drive/folders/${context.folders.project}`, websites_url: `https://drive.google.com/drive/folders/${context.folders.websites}` } }];"
+      },
+      "id": "delivery-build-result",
+      "name": "Build Routed Delivery Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5820,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.spreadsheet_id }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Aktivitäten"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Aktivitäts-ID": "={{ 'DELIVERY-' + $json.project.id + '-' + $now.toMillis() }}",
+            "Lead-ID": "",
+            "Zeitpunkt": "={{ $now.toISO() }}",
+            "Typ": "Projektlieferung",
+            "Kanal": "Google Drive",
+            "Agent": "FLOW",
+            "Zusammenfassung": "={{ $json.project.name }}",
+            "Ergebnis": "={{ $json.artifact_count + ' Artefakte gesichert' }}",
+            "Nächste Aktion": "Ergebnisse in Mission Control prüfen",
+            "Freigabe erforderlich": "Nein"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Aktivitäts-ID",
+              "displayName": "Aktivitäts-ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead-ID",
+              "displayName": "Lead-ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Zeitpunkt",
+              "displayName": "Zeitpunkt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Typ",
+              "displayName": "Typ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kanal",
+              "displayName": "Kanal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Agent",
+              "displayName": "Agent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Zusammenfassung",
+              "displayName": "Zusammenfassung",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Ergebnis",
+              "displayName": "Ergebnis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Nächste Aktion",
+              "displayName": "Nächste Aktion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Freigabe erforderlich",
+              "displayName": "Freigabe erforderlich",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-delivery",
+      "name": "Log Delivery in Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        6060,
+        420
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "__GOOGLE_SHEETS_CREDENTIAL_ID__",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Routed Delivery Result').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "return-delivery",
+      "name": "Return Delivery Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        6300,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Mission Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Mission & Build Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Mission & Build Questions": {
+      "main": [
+        [
+          {
+            "node": "Requirements Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requirements Complete?": {
+      "main": [
+        [
+          {
+            "node": "Log Mission in Google Sheets CRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Clarifying Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Mission in Google Sheets CRM": {
+      "main": [
+        [
+          {
+            "node": "Return Mission Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Mission Started": {
+      "main": [
+        [
+          {
+            "node": "Research Leads & Create Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive Qualified Lead": {
+      "main": [
+        [
+          {
+            "node": "Enforce Draft Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enforce Draft Only": {
+      "main": [
+        [
+          {
+            "node": "Append Lead to CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Lead to CRM": {
+      "main": [
+        [
+          {
+            "node": "Create Gmail Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Gmail Draft": {
+      "main": [
+        [
+          {
+            "node": "Return Approval Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Project Folder": {
+      "main": [
+        [
+          {
+            "node": "Select Project Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Project Folder": {
+      "main": [
+        [
+          {
+            "node": "Project Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "Finalize Project Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Project Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Project Folder": {
+      "main": [
+        [
+          {
+            "node": "Finalize Project Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Delivery Webhook": {
+      "main": [
+        [
+          {
+            "node": "Search Project Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search CRM & Leads Folder": {
+      "main": [
+        [
+          {
+            "node": "Select CRM & Leads Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select CRM & Leads Folder": {
+      "main": [
+        [
+          {
+            "node": "CRM & Leads Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM & Leads Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "Finalize CRM & Leads Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create CRM & Leads Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create CRM & Leads Folder": {
+      "main": [
+        [
+          {
+            "node": "Finalize CRM & Leads Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Project Folder": {
+      "main": [
+        [
+          {
+            "node": "Search CRM & Leads Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Websites & Angebote Folder": {
+      "main": [
+        [
+          {
+            "node": "Select Websites & Angebote Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Websites & Angebote Folder": {
+      "main": [
+        [
+          {
+            "node": "Websites & Angebote Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Websites & Angebote Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "Finalize Websites & Angebote Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Websites & Angebote Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Websites & Angebote Folder": {
+      "main": [
+        [
+          {
+            "node": "Finalize Websites & Angebote Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize CRM & Leads Folder": {
+      "main": [
+        [
+          {
+            "node": "Search Websites & Angebote Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Berichte & Ergebnisse Folder": {
+      "main": [
+        [
+          {
+            "node": "Select Berichte & Ergebnisse Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Berichte & Ergebnisse Folder": {
+      "main": [
+        [
+          {
+            "node": "Berichte & Ergebnisse Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Berichte & Ergebnisse Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "Finalize Berichte & Ergebnisse Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Berichte & Ergebnisse Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Berichte & Ergebnisse Folder": {
+      "main": [
+        [
+          {
+            "node": "Finalize Berichte & Ergebnisse Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Websites & Angebote Folder": {
+      "main": [
+        [
+          {
+            "node": "Search Berichte & Ergebnisse Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Berichte & Ergebnisse Folder": {
+      "main": [
+        [
+          {
+            "node": "Search Project CRM Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Project CRM Sheet": {
+      "main": [
+        [
+          {
+            "node": "Select Project CRM Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Project CRM Sheet": {
+      "main": [
+        [
+          {
+            "node": "Project CRM Sheet Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project CRM Sheet Exists?": {
+      "main": [
+        [
+          {
+            "node": "Finalize Project CRM Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Copy CRM Sheet to Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Copy CRM Sheet to Project": {
+      "main": [
+        [
+          {
+            "node": "Finalize Project CRM Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Project CRM Sheet": {
+      "main": [
+        [
+          {
+            "node": "Prepare Routed Delivery Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Routed Delivery Files": {
+      "main": [
+        [
+          {
+            "node": "Upload Routed Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Routed Artifacts": {
+      "main": [
+        [
+          {
+            "node": "Build Routed Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Routed Delivery Result": {
+      "main": [
+        [
+          {
+            "node": "Log Delivery in Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Delivery in Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Return Delivery Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

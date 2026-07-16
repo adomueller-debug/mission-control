@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -401,9 +402,11 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
     tmp_path: Path, monkeypatch
 ):
     captured = {}
+    sent = threading.Event()
 
     def fake_send(payload):
         captured.update(payload)
+        sent.set()
         return {
             "status": "project_created",
             "project_id": "project-from-n8n",
@@ -412,6 +415,13 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
         }
 
     monkeypatch.setattr(operations_router, "_send_to_n8n", fake_send)
+    monkeypatch.setattr(
+        operations_router,
+        "_dispatch_website_mission",
+        lambda project_id, _task, payload: fake_send(
+            {**payload, "project_id": project_id}
+        ),
+    )
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/operations/intake",
@@ -423,7 +433,11 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
 
     assert response.status_code == 202
     assert response.json()["route"]["workflow"] == "website_sales"
-    assert response.json()["project_id"] == "project-from-n8n"
+    assert response.json()["status"] == "project_created"
+    assert response.json()["phase"] == "planning"
+    assert response.json()["project_id"] != "project-from-n8n"
+    assert sent.wait(2)
+    assert captured["project_id"] == response.json()["project_id"]
     assert captured["max_leads"] == 20
     assert captured["offer_min"] == 200
     assert captured["offer_max"] == 500
@@ -433,13 +447,23 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
     assert "cineastisch" in captured["animation_style"]
 
 
-def test_operations_intake_explains_n8n_timeout_without_suggesting_resubmit(
+def test_operations_intake_accepts_project_while_n8n_times_out_in_background(
     tmp_path: Path, monkeypatch
 ):
+    attempted = threading.Event()
+
     def timeout(_payload):
+        attempted.set()
         raise requests.ReadTimeout("n8n is still processing")
 
     monkeypatch.setattr(operations_router, "_send_to_n8n", timeout)
+    def dispatch(_project_id, _task, payload):
+        try:
+            timeout(payload)
+        except requests.ReadTimeout:
+            pass
+
+    monkeypatch.setattr(operations_router, "_dispatch_website_mission", dispatch)
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/operations/intake",
@@ -449,9 +473,12 @@ def test_operations_intake_explains_n8n_timeout_without_suggesting_resubmit(
             },
         )
 
-    assert response.status_code == 504
-    assert "Projektboard prüfen" in response.json()["detail"]
-    assert "erneut absendest" in response.json()["detail"]
+    assert response.status_code == 202
+    assert response.json()["status"] == "project_created"
+    assert attempted.wait(2)
+    with TestClient(app) as client:
+        project = client.get(f"/api/v1/projects/{response.json()['project_id']}")
+    assert project.status_code == 200
 
 
 def test_operations_router_keeps_mission_control_changes_on_coding_engine(
@@ -505,12 +532,12 @@ def test_operations_router_collects_context_for_unknown_business_mission(
     }
 
 
-def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
+def test_business_workflow_combines_intake_crm_gmail_and_delivery():
     workflow_path = (
         Path(__file__).resolve().parents[2]
         / "n8n"
         / "workflows"
-        / "website-sales-heidelberg.json"
+        / "mission-control-business-automation.json"
     )
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     nodes = {node["name"]: node for node in workflow["nodes"]}
@@ -522,9 +549,11 @@ def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
     assert "Starterangebot" in normalize
     assert sheets["type"] == "n8n-nodes-base.googleSheets"
     assert sheets["parameters"]["sheetName"]["value"] == "Aktivitäten"
-    assert workflow["connections"]["Approve & Materialize Tasks"]["main"][0][0][
-        "node"
-    ] == "Log Mission in Google Sheets CRM"
+    assert workflow["name"] == "Mission Control – Business Automation"
+    assert "Approve & Materialize Tasks" not in nodes
+    assert nodes["Create Gmail Draft"]["type"] == "n8n-nodes-base.gmail"
+    assert nodes["Project Delivery Webhook"]["type"] == "n8n-nodes-base.webhook"
+    assert workflow["connections"]["Requirements Complete?"]["main"][0][0]["node"] == "Log Mission in Google Sheets CRM"
     assert workflow["connections"]["Log Mission in Google Sheets CRM"]["main"][0][
         0
     ]["node"] == "Return Mission Started"
@@ -536,28 +565,28 @@ def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
     assert "research_status: 'queued'" in response_body
 
 
-def test_project_delivery_workflow_uploads_files_and_logs_completion():
+def test_business_workflow_reuses_project_drive_hierarchy_and_routes_files():
     workflow_path = (
         Path(__file__).resolve().parents[2]
         / "n8n"
         / "workflows"
-        / "project-delivery-sync.json"
+        / "mission-control-business-automation.json"
     )
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     nodes = {node["name"]: node for node in workflow["nodes"]}
 
-    assert nodes["Create Project Delivery Folder"]["type"] == (
-        "n8n-nodes-base.googleDrive"
-    )
-    assert nodes["Upload Artifacts to Google Drive"]["parameters"][
+    for folder in ("Project", "CRM & Leads", "Websites & Angebote", "Berichte & Ergebnisse"):
+        assert nodes[f"Search {folder} Folder"]["type"] == "n8n-nodes-base.googleDrive"
+        assert nodes[f"Create {folder} Folder"]["type"] == "n8n-nodes-base.googleDrive"
+    assert nodes["Copy CRM Sheet to Project"]["parameters"]["operation"] == "copy"
+    assert nodes["Copy CRM Sheet to Project"]["parameters"]["folderId"]["value"] == "={{ $json.folders.crm }}"
+    assert nodes["Upload Routed Artifacts"]["parameters"][
         "inputDataFieldName"
     ] == "data"
     assert nodes["Log Delivery in Google Sheets"]["parameters"]["sheetName"][
         "value"
     ] == "Aktivitäten"
-    assert workflow["connections"]["Log Delivery in Google Sheets"]["main"][0][
-        0
-    ]["node"] == "Return Delivery Result"
+    assert workflow["connections"]["Log Delivery in Google Sheets"]["main"][0][0]["node"] == "Return Delivery Result"
 
 
 def test_project_portfolio_persists_tasks_and_agent_assignments(
@@ -695,6 +724,7 @@ def test_completed_project_files_are_archived_and_previewed(
         website_artifact = next(item for item in artifacts if item["artifact_type"] == "website")
         report = next(item for item in artifacts if item["artifact_type"] == "report")
         assert website_artifact["preview_available"] is True
+        assert report["preview_available"] is True
         assert len(artifacts) == 4
 
         preview = client.get(
@@ -703,6 +733,7 @@ def test_completed_project_files_are_archived_and_previewed(
         assert preview.status_code == 200
         assert "Demo" in preview.text
         assert "connect-src 'none'" in preview.headers["content-security-policy"]
+        assert "http://127.0.0.1:5173" in preview.headers["content-security-policy"]
         stylesheet = client.get(
             f"/api/v1/project-artifacts/{website_artifact['id']}/preview/style.css"
         )
@@ -713,9 +744,13 @@ def test_completed_project_files_are_archived_and_previewed(
         assert download.status_code == 200
         assert download.json()["project"]["id"] == project["id"]
 
+        report_preview = client.get(f"/api/v1/project-artifacts/{report['id']}/preview")
+        assert report_preview.status_code == 200
+        assert report_preview.json()["project"]["id"] == project["id"]
+
         sync = client.post(f"/api/v1/projects/{project['id']}/artifacts/sync")
-        assert sync.status_code == 200
-        assert sync.json()["status"] == "local"
+        assert sync.status_code == 202
+        assert sync.json()["status"] == "unchanged"
 
 
 def test_project_can_be_archived_and_restored_with_active_run_cancelled(

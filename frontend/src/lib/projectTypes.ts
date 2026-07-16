@@ -32,6 +32,7 @@ export type ProjectArtifact = {
   sync_status: "local" | "pending" | "synced" | "failed";
   external_url: string | null;
   preview_available: boolean;
+  preview_kind: "website" | "document";
   created_at: string;
 };
 
@@ -48,6 +49,13 @@ export type Project = {
   budget_cents: number;
   revenue_target_cents: number;
   autopilot_enabled: boolean;
+  delivery_status: "pending" | "syncing" | "synced" | "failed" | "local";
+  delivery_error: string;
+  delivery_progress: number;
+  delivery_synced: number;
+  delivery_total: number;
+  delivery_synced_at: string | null;
+  drive_url: string | null;
   progress: number;
   task_counts: Partial<Record<ProjectTaskStatus, number>>;
   active_agents: string[];

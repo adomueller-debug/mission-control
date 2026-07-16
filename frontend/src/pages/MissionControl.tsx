@@ -432,8 +432,8 @@ export default function MissionControl() {
                 <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.035] p-4">
                   <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-300/10 text-emerald-300"><BriefcaseBusiness size={16} /></div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-emerald-100">Business-Mission geplant</p>
-                    <p className="mt-1 text-[11px] text-slate-500">BOSS hat {businessResult.task_count ?? 0} Aufgaben delegiert. Externe E-Mails bleiben Entwürfe.</p>
+                    <p className="text-sm font-medium text-emerald-100">Mission angenommen</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{businessResult.phase === "planning" ? "BOSS plant und delegiert jetzt automatisch im Hintergrund." : `BOSS hat ${businessResult.task_count ?? 0} Aufgaben delegiert.`} Externe E-Mails bleiben Entwürfe.</p>
                   </div>
                   <button type="button" onClick={() => setView("projects")} className="mc-button-primary mc-arrow-action flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold">
                     Projekt öffnen <ArrowRight size={13} />

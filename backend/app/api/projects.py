@@ -7,7 +7,6 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-import requests
 
 from backend.app.api.runs import RunOptions
 from backend.app.services.project_service import project_service
@@ -188,14 +187,19 @@ def list_project_artifacts(project_id: str):
     return project_artifact_service.list_project(project_id)
 
 
-@router.post("/projects/{project_id}/artifacts/sync")
+@router.post("/projects/{project_id}/artifacts/sync", status_code=202)
 def sync_project_artifacts(project_id: str):
-    try:
-        return project_artifact_service.sync_project(project_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Projekt nicht gefunden") from exc
-    except (OSError, ValueError, requests.RequestException) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if project_service.get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden")
+    scheduled = project_artifact_service.schedule_sync(project_id)
+    return {
+        "status": "syncing" if scheduled else "unchanged",
+        "message": (
+            "Die automatische Drive-Synchronisierung läuft im Hintergrund."
+            if scheduled
+            else "Die Synchronisierung läuft bereits oder Drive ist nicht konfiguriert."
+        ),
+    }
 
 
 @router.get("/project-artifacts/{artifact_id}/content")
@@ -225,24 +229,45 @@ def preview_project_artifact_asset(artifact_id: str, asset_path: str):
 
 def _preview_project_artifact(artifact_id: str, asset_path: str):
     artifact = project_artifact_service.get(artifact_id)
-    if artifact is None or artifact.artifact_type != "website":
-        raise HTTPException(status_code=404, detail="Website-Vorschau nicht gefunden")
-    root = Path(artifact.storage_path).resolve()
-    relative = asset_path or artifact.entry_path or "index.html"
-    target = (root / relative).resolve()
-    if root not in target.parents and target != root:
-        raise HTTPException(status_code=403, detail="Ungültiger Vorschaupfad")
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Vorschau nicht gefunden")
+    if artifact.artifact_type == "website":
+        root = Path(artifact.storage_path).resolve()
+        relative = asset_path or artifact.entry_path or "index.html"
+        target = (root / relative).resolve()
+        if root not in target.parents and target != root:
+            raise HTTPException(status_code=403, detail="Ungültiger Vorschaupfad")
+    else:
+        if asset_path:
+            raise HTTPException(status_code=404, detail="Vorschau-Datei nicht gefunden")
+        target = Path(artifact.storage_path).resolve()
+        if not (
+            artifact.media_type.startswith("text/")
+            or artifact.media_type
+            in {
+                "application/json",
+                "application/pdf",
+                "image/gif",
+                "image/jpeg",
+                "image/png",
+                "image/svg+xml",
+                "image/webp",
+            }
+        ):
+            raise HTTPException(status_code=415, detail="Keine Inline-Vorschau verfügbar")
     if not target.is_file():
         raise HTTPException(status_code=404, detail="Vorschau-Datei nicht gefunden")
-    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    media_type = artifact.media_type or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     return FileResponse(
         target,
         media_type=media_type,
+        content_disposition_type="inline",
         headers={
             "Content-Security-Policy": (
                 "default-src 'self' data:; script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                "connect-src 'none'; form-action 'none'; base-uri 'self'"
+                "connect-src 'none'; form-action 'none'; base-uri 'self'; "
+                "frame-ancestors http://127.0.0.1:5173 http://localhost:5173"
             ),
             "X-Content-Type-Options": "nosniff",
         },

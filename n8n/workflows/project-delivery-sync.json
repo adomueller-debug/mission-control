@@ -96,7 +96,18 @@
             "Freigabe erforderlich": "Nein"
           },
           "matchingColumns": [],
-          "schema": []
+          "schema": [
+            { "id": "Aktivitäts-ID", "displayName": "Aktivitäts-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Lead-ID", "displayName": "Lead-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Zeitpunkt", "displayName": "Zeitpunkt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Typ", "displayName": "Typ", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Kanal", "displayName": "Kanal", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Agent", "displayName": "Agent", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Zusammenfassung", "displayName": "Zusammenfassung", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Ergebnis", "displayName": "Ergebnis", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Nächste Aktion", "displayName": "Nächste Aktion", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Freigabe erforderlich", "displayName": "Freigabe erforderlich", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
         },
         "options": {}
       },

@@ -224,7 +224,7 @@ class ProjectArtifactService:
                 payload_artifacts.append(
                     {
                         "id": artifact.id,
-                        "key": artifact.artifact_key,
+                        "key": artifact.id,
                         "name": artifact.name,
                         "media_type": artifact.media_type,
                         "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
@@ -242,10 +242,12 @@ class ProjectArtifactService:
             )
             response.raise_for_status()
             data = response.json() if response.content else {}
+            if not isinstance(data, dict) or data.get("status") != "synced":
+                raise ValueError("n8n hat die Projektlieferung nicht bestätigt.")
             links = data.get("artifact_urls", {}) if isinstance(data, dict) else {}
             for artifact in artifacts:
                 artifact.sync_status = "synced"
-                artifact.external_url = str(links.get(artifact.artifact_key, ""))
+                artifact.external_url = str(links.get(artifact.id, ""))
             db.commit()
             return {"status": "synced", "artifact_count": len(artifacts)}
 

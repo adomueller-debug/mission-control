@@ -7,14 +7,19 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
+import requests
 from sqlalchemy import select
 
 from backend.app.core.workspace_security import resolve_workspace
 from backend.app.database.database import SessionLocal
-from backend.app.models.project import Project, ProjectTask
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask
 from backend.app.models.run import AgentRun
 from backend.app.services.agent_catalog import get_agent
 from backend.app.services.run_service import run_service
+from backend.app.services.project_artifact_service import (
+    artifact_to_dict,
+    project_artifact_service,
+)
 
 
 PROJECT_STATUSES = {"idea", "planning", "active", "paused", "completed", "archived"}
@@ -72,7 +77,11 @@ def _task_dict(task: ProjectTask) -> dict[str, Any]:
     }
 
 
-def _project_dict(project: Project, tasks: list[ProjectTask]) -> dict[str, Any]:
+def _project_dict(
+    project: Project,
+    tasks: list[ProjectTask],
+    artifacts: list[ProjectArtifact] | None = None,
+) -> dict[str, Any]:
     counts = Counter(task.status for task in tasks)
     relevant = [task for task in tasks if task.status != "cancelled"]
     completed = counts["completed"]
@@ -104,6 +113,7 @@ def _project_dict(project: Project, tasks: list[ProjectTask]) -> dict[str, Any]:
         "task_counts": dict(counts),
         "active_agents": active_agents,
         "tasks": [_task_dict(task) for task in tasks],
+        "artifacts": [artifact_to_dict(item) for item in artifacts or []],
     }
 
 
@@ -172,10 +182,23 @@ class ProjectService:
             tasks = db.scalars(
                 select(ProjectTask).order_by(ProjectTask.priority, ProjectTask.created_at)
             ).all()
+            artifacts = db.scalars(
+                select(ProjectArtifact).order_by(ProjectArtifact.created_at.desc())
+            ).all()
             grouped: dict[str, list[ProjectTask]] = defaultdict(list)
+            grouped_artifacts: dict[str, list[ProjectArtifact]] = defaultdict(list)
             for task in tasks:
                 grouped[task.project_id].append(task)
-            return [_project_dict(project, grouped[project.id]) for project in projects]
+            for artifact in artifacts:
+                grouped_artifacts[artifact.project_id].append(artifact)
+            return [
+                _project_dict(
+                    project,
+                    grouped[project.id],
+                    grouped_artifacts[project.id],
+                )
+                for project in projects
+            ]
 
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         with SessionLocal() as db:
@@ -188,7 +211,12 @@ class ProjectService:
                 .where(ProjectTask.project_id == project_id)
                 .order_by(ProjectTask.priority, ProjectTask.created_at)
             ).all()
-            return _project_dict(project, list(tasks))
+            artifacts = db.scalars(
+                select(ProjectArtifact)
+                .where(ProjectArtifact.project_id == project_id)
+                .order_by(ProjectArtifact.created_at.desc())
+            ).all()
+            return _project_dict(project, list(tasks), list(artifacts))
 
     def update_project(self, project_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         if "status" in fields:
@@ -445,6 +473,12 @@ class ProjectService:
                         project_id,
                         {"status": "completed", "autopilot_enabled": False},
                     )
+                    try:
+                        project_artifact_service.sync_project(project_id)
+                    except (OSError, ValueError, requests.RequestException):
+                        # Local persistence is authoritative. External Drive sync can
+                        # be retried from the dashboard without failing the project.
+                        pass
                     return
 
                 completed_ids = {
@@ -493,6 +527,13 @@ class ProjectService:
                 task.result = run.result
                 task.updated_at = datetime.now(UTC)
                 changed = True
+            if run.status == "completed" and run.result:
+                project = db.get(Project, task.project_id)
+                if project is not None:
+                    _, created = project_artifact_service.archive_completed_task(
+                        db, project, task, run
+                    )
+                    changed = changed or created
         if changed:
             db.commit()
 

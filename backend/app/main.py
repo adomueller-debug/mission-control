@@ -27,7 +27,7 @@ from backend.app.database.database import Base, engine
 from backend.app.api.tasks import router as tasks_router
 from backend.app.api.agents import router as agents_router
 from backend.app.models.run import AgentRun, RunCheckpoint, RunEvent  # noqa: F401
-from backend.app.models.project import Project, ProjectTask  # noqa: F401
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask  # noqa: F401
 from backend.app.models.mission import (  # noqa: F401
     IntegrationRequirement,
     MissionPlan,

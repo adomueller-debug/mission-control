@@ -20,11 +20,27 @@ WORKFLOWS = (
         ROOT / "n8n/workflows/website-sales-lead-processing.json",
         "N8N_SALES_LEAD_WORKFLOW_ID",
     ),
+    (
+        ROOT / "n8n/workflows/project-delivery-sync.json",
+        "N8N_PROJECT_DELIVERY_WORKFLOW_ID",
+    ),
 )
 
 
 def _payload(path: Path) -> dict[str, Any]:
     source = json.loads(path.read_text(encoding="utf-8"))
+    replacements = {
+        "__GOOGLE_DRIVE_CREDENTIAL_ID__": os.getenv(
+            "N8N_GOOGLE_DRIVE_CREDENTIAL_ID", ""
+        ),
+        "__GOOGLE_SHEETS_CREDENTIAL_ID__": os.getenv(
+            "N8N_GOOGLE_SHEETS_CREDENTIAL_ID", ""
+        ),
+    }
+    serialized = json.dumps(source)
+    for placeholder, value in replacements.items():
+        serialized = serialized.replace(placeholder, value)
+    source = json.loads(serialized)
     return {
         key: source[key]
         for key in ("name", "nodes", "connections", "settings")
@@ -49,6 +65,18 @@ def sync() -> None:
     existing = {item["name"]: item for item in response.json().get("data", [])}
 
     for path, env_key in WORKFLOWS:
+        if path.name == "project-delivery-sync.json" and not all(
+            os.getenv(key)
+            for key in (
+                "N8N_GOOGLE_DRIVE_CREDENTIAL_ID",
+                "N8N_GOOGLE_SHEETS_CREDENTIAL_ID",
+            )
+        ):
+            print(
+                "Mission Control – Project Delivery Sync: übersprungen "
+                "(Google-Drive- oder Sheets-Credential fehlt)"
+            )
+            continue
         payload = _payload(path)
         workflow = existing.get(payload["name"])
         if workflow:

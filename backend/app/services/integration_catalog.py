@@ -84,16 +84,19 @@ INTEGRATIONS: list[dict[str, Any]] = [
             ["GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID"],
             ["GOOGLE_SHEETS_CRM_SPREADSHEET_ID"],
             ["N8N_GOOGLE_SHEETS_CREDENTIAL_ID"],
+            ["N8N_GOOGLE_DRIVE_CREDENTIAL_ID"],
         ],
         "configurable_keys": [
             "GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID",
             "GOOGLE_SHEETS_CRM_SPREADSHEET_ID",
             "N8N_GOOGLE_SHEETS_CREDENTIAL_ID",
+            "N8N_GOOGLE_DRIVE_CREDENTIAL_ID",
+            "N8N_PROJECT_DELIVERY_WEBHOOK_URL",
         ],
         "setup_steps": [
             "Google Drive und das CRM-Sheet im gewünschten Konto anlegen.",
-            "Google-Sheets-OAuth in n8n verbinden.",
-            "Die n8n-Credential-ID lokal konfigurieren und den Verbindungstest ausführen.",
+            "Google Sheets und Google Drive OAuth in n8n verbinden.",
+            "Beide n8n-Credential-IDs sowie den Delivery-Webhook lokal konfigurieren.",
         ],
     },
     {

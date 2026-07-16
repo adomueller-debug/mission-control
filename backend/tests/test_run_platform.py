@@ -23,7 +23,7 @@ from backend.app.models.run import (
     RunCheckpoint,
     RunEvent,
 )
-from backend.app.models.project import Project, ProjectTask
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask
 from backend.app.models.mission import (
     IntegrationRequirement,
     MissionPlan,
@@ -60,6 +60,7 @@ def clean_runs():
         db.execute(delete(MissionPlanTask))
         db.execute(delete(MissionPlan))
         db.execute(delete(IntegrationRequirement))
+        db.execute(delete(ProjectArtifact))
         db.execute(delete(ProjectTask))
         db.execute(delete(Project))
         db.execute(delete(AgentMemoryEntry))
@@ -535,6 +536,30 @@ def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
     assert "research_status: 'queued'" in response_body
 
 
+def test_project_delivery_workflow_uploads_files_and_logs_completion():
+    workflow_path = (
+        Path(__file__).resolve().parents[2]
+        / "n8n"
+        / "workflows"
+        / "project-delivery-sync.json"
+    )
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    nodes = {node["name"]: node for node in workflow["nodes"]}
+
+    assert nodes["Create Project Delivery Folder"]["type"] == (
+        "n8n-nodes-base.googleDrive"
+    )
+    assert nodes["Upload Artifacts to Google Drive"]["parameters"][
+        "inputDataFieldName"
+    ] == "data"
+    assert nodes["Log Delivery in Google Sheets"]["parameters"]["sheetName"][
+        "value"
+    ] == "Aktivitäten"
+    assert workflow["connections"]["Log Delivery in Google Sheets"]["main"][0][
+        0
+    ]["node"] == "Return Delivery Result"
+
+
 def test_project_portfolio_persists_tasks_and_agent_assignments(
     tmp_path: Path, monkeypatch
 ):
@@ -620,6 +645,77 @@ def test_coding_project_task_starts_run_and_tracks_completion(
         refreshed = client.get(f"/api/v1/projects/{project['id']}").json()
         assert refreshed["progress"] == 100
         assert refreshed["tasks"][0]["status"] == "completed"
+
+
+def test_completed_project_files_are_archived_and_previewed(
+    tmp_path: Path, monkeypatch
+):
+    workspace = tmp_path / "workspace"
+    website = workspace / "projects" / "demo"
+    website.mkdir(parents=True)
+    (website / "index.html").write_text(
+        '<!doctype html><link rel="stylesheet" href="style.css"><h1>Demo</h1>',
+        encoding="utf-8",
+    )
+    (website / "style.css").write_text("h1 { color: teal; }", encoding="utf-8")
+    monkeypatch.setenv("MISSION_CONTROL_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.delenv("N8N_PROJECT_DELIVERY_WEBHOOK_URL", raising=False)
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Website Demo", "workspace": str(workspace)},
+        ).json()
+        task = client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={
+                "title": "Website-Entwurf bauen",
+                "task_type": "coding",
+                "assigned_agent": "forge",
+            },
+        ).json()
+        started = client.post(f"/api/v1/project-tasks/{task['id']}/run", json={})
+        run_id = started.json()["run"]["id"]
+        run_service.update(
+            run_id,
+            result={
+                "summary": "Lieferbarer Website-Entwurf erstellt.",
+                "files": [
+                    "projects/demo/index.html",
+                    "projects/demo/style.css",
+                ],
+            },
+        )
+        run_service.transition(run_id, "completed")
+
+        refreshed = client.get(f"/api/v1/projects/{project['id']}")
+        assert refreshed.status_code == 200
+        artifacts = refreshed.json()["artifacts"]
+        website_artifact = next(item for item in artifacts if item["artifact_type"] == "website")
+        report = next(item for item in artifacts if item["artifact_type"] == "report")
+        assert website_artifact["preview_available"] is True
+        assert len(artifacts) == 4
+
+        preview = client.get(
+            f"/api/v1/project-artifacts/{website_artifact['id']}/preview"
+        )
+        assert preview.status_code == 200
+        assert "Demo" in preview.text
+        assert "connect-src 'none'" in preview.headers["content-security-policy"]
+        stylesheet = client.get(
+            f"/api/v1/project-artifacts/{website_artifact['id']}/preview/style.css"
+        )
+        assert stylesheet.status_code == 200
+        assert "color: teal" in stylesheet.text
+
+        download = client.get(f"/api/v1/project-artifacts/{report['id']}/content")
+        assert download.status_code == 200
+        assert download.json()["project"]["id"] == project["id"]
+
+        sync = client.post(f"/api/v1/projects/{project['id']}/artifacts/sync")
+        assert sync.status_code == 200
+        assert sync.json()["status"] == "local"
 
 
 def test_workspace_rejects_parent_and_symlink_escape(tmp_path: Path):

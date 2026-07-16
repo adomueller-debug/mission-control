@@ -20,6 +20,21 @@ export type ProjectTask = {
   dependencies: string[];
 };
 
+export type ProjectArtifact = {
+  id: string;
+  project_id: string;
+  task_id: string;
+  run_id: string;
+  name: string;
+  artifact_type: string;
+  media_type: string;
+  size_bytes: number;
+  sync_status: "local" | "pending" | "synced" | "failed";
+  external_url: string | null;
+  preview_available: boolean;
+  created_at: string;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -37,6 +52,7 @@ export type Project = {
   task_counts: Partial<Record<ProjectTaskStatus, number>>;
   active_agents: string[];
   tasks: ProjectTask[];
+  artifacts: ProjectArtifact[];
   created_at: string;
   updated_at: string;
 };

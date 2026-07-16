@@ -8,8 +8,14 @@ import {
   ChevronDown,
   CheckCircle2,
   CircleDollarSign,
+  CloudUpload,
+  Download,
+  ExternalLink,
+  Eye,
   FileCode2,
+  FileText,
   FolderKanban,
+  Globe2,
   ListTodo,
   PackageCheck,
   Pause,
@@ -19,10 +25,11 @@ import {
   RotateCcw,
   Target,
   TriangleAlert,
+  X,
 } from "lucide-react";
 
 import type { AgentProfile } from "../../lib/agentTypes";
-import { api } from "../../lib/api";
+import { API_BASE, api } from "../../lib/api";
 import type {
   Project,
   ProjectStatus,
@@ -259,7 +266,7 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
                   </button>
                 </div>
               </div>
-              {selected.status === "archived" ? <ArchivedProjectSummary project={selected} /> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} /><TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
+              {selected.status === "archived" ? <><ArchivedProjectSummary project={selected} /><ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} onRefresh={load} /></> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} onRefresh={load} /><TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
             </>
           ) : (
             <div className="grid min-h-[500px] place-items-center px-6 text-center"><div><FolderKanban size={26} className="mx-auto text-slate-700" /><p className="mt-3 text-sm font-medium text-slate-400">Wähle ein Projekt</p><p className="mt-1 max-w-sm text-xs leading-5 text-slate-600">Details, Briefing und Aufgaben werden erst geöffnet, wenn du ein Projekt auswählst.</p></div></div>
@@ -285,7 +292,10 @@ function ArchivedProjectSummary({ project }: { project: Project }) {
 
 type ResultArtifact = { title: string; content: string; artifact_type?: string };
 
-function ProjectResults({ project, agents, onOpenRun }: { project: Project; agents: AgentProfile[]; onOpenRun: (id: string) => void }) {
+function ProjectResults({ project, agents, onOpenRun, onRefresh }: { project: Project; agents: AgentProfile[]; onOpenRun: (id: string) => void; onRefresh: () => Promise<void> }) {
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const results = project.tasks.flatMap((task) => {
     const payload = task.result;
     if (!payload) return [];
@@ -295,16 +305,37 @@ function ProjectResults({ project, agents, onOpenRun }: { project: Project; agen
     const findings = Array.isArray(payload.findings) ? payload.findings.filter((item): item is string => typeof item === "string") : [];
     return [{ task, summary, files, artifacts, findings }];
   });
-  if (results.length === 0) return null;
+  const persisted = project.artifacts ?? [];
+  if (results.length === 0 && persisted.length === 0) return null;
   const fileCount = results.reduce((total, item) => total + item.files.length, 0);
-  const artifactCount = results.reduce((total, item) => total + item.artifacts.length, 0);
+  const artifactCount = persisted.length || results.reduce((total, item) => total + item.artifacts.length, 0);
+  const websites = persisted.filter((artifact) => artifact.preview_available);
+  const deliverables = persisted.filter((artifact) => !artifact.preview_available);
+  const preview = websites.find((artifact) => artifact.id === previewId);
+
+  async function syncToDrive() {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const response = await api<{ status: string; message?: string }>(`/api/v1/projects/${project.id}/artifacts/sync`, { method: "POST" });
+      setSyncMessage(response.message ?? (response.status === "synced" ? "In Google Drive gesichert." : "Lokal gesichert."));
+      await onRefresh();
+    } catch (reason) {
+      setSyncMessage(reason instanceof Error ? reason.message : "Synchronisierung fehlgeschlagen");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <section className="mt-5 rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.02] p-3 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2"><PackageCheck size={15} className="text-emerald-300" /><div><h3 className="text-sm font-semibold">Ergebnisse & Artefakte</h3><p className="mt-0.5 text-[10px] text-slate-600">Persistiert aus {results.length} abgeschlossenen Agentenaufgaben</p></div></div>
-        <div className="flex gap-2 text-[10px] text-slate-500"><span className="rounded-lg bg-white/[0.04] px-2 py-1">{fileCount} Dateien</span><span className="rounded-lg bg-white/[0.04] px-2 py-1">{artifactCount} Artefakte</span></div>
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500"><span className="rounded-lg bg-white/[0.04] px-2 py-1">{fileCount} Dateien</span><span className="rounded-lg bg-white/[0.04] px-2 py-1">{artifactCount} Artefakte</span>{persisted.length > 0 && <button disabled={syncing} onClick={() => void syncToDrive()} className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-cyan-300/80"><CloudUpload size={11} className={syncing ? "animate-pulse" : ""} /> {syncing ? "Synchronisiere…" : "Drive synchronisieren"}</button>}</div>
       </div>
+      {syncMessage && <p className="mt-2 rounded-lg bg-white/[0.025] px-3 py-2 text-[10px] text-slate-500">{syncMessage}</p>}
+      {websites.length > 0 && <div className="mt-4 grid gap-3 xl:grid-cols-2">{websites.map((artifact) => <article key={artifact.id} className="group overflow-hidden rounded-xl border border-cyan-300/10 bg-black/20"><button onClick={() => setPreviewId(artifact.id)} className="relative block aspect-[16/9] w-full overflow-hidden bg-[#070b10] text-left"><iframe title={artifact.name} src={`${API_BASE}/api/v1/project-artifacts/${artifact.id}/preview`} sandbox="allow-scripts" tabIndex={-1} className="pointer-events-none h-[200%] w-[200%] origin-top-left scale-50 border-0 opacity-80 transition duration-500 group-hover:scale-[0.52] group-hover:opacity-100" /><span className="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/25"><span className="flex translate-y-2 items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-2 text-[10px] text-white opacity-0 shadow-2xl backdrop-blur-xl transition group-hover:translate-y-0 group-hover:opacity-100"><Eye size={12} /> Vorschau öffnen</span></span></button><div className="flex items-center gap-3 p-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-cyan-300/10 text-cyan-300"><Globe2 size={14} /></span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-slate-300">{artifact.name}</span><span className="mt-0.5 block text-[9px] text-slate-600">Website · {formatBytes(artifact.size_bytes)} · {syncLabel(artifact.sync_status)}</span></span><button onClick={() => setPreviewId(artifact.id)} className="mc-icon-button h-8 w-8 rounded-lg text-slate-400" title="Vorschau öffnen"><Eye size={13} /></button></div></article>)}</div>}
+      {deliverables.length > 0 && <div className="mt-3 divide-y divide-white/[0.05] overflow-hidden rounded-xl border border-white/[0.06] bg-black/10">{deliverables.map((artifact) => <div key={artifact.id} className="flex items-center gap-3 px-3 py-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-slate-500"><FileText size={13} /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] text-slate-300">{artifact.name}</span><span className="mt-0.5 block text-[9px] text-slate-600">{artifact.artifact_type} · {formatBytes(artifact.size_bytes)} · {syncLabel(artifact.sync_status)}</span></span>{artifact.external_url && <a href={artifact.external_url} target="_blank" rel="noreferrer" className="mc-icon-button grid h-8 w-8 place-items-center rounded-lg text-slate-400" title="In Google Drive öffnen"><ExternalLink size={12} /></a>}<a href={`${API_BASE}/api/v1/project-artifacts/${artifact.id}/content`} className="mc-icon-button grid h-8 w-8 place-items-center rounded-lg text-slate-400" title="Herunterladen"><Download size={12} /></a></div>)}</div>}
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {results.map(({ task, summary, files, artifacts, findings }) => {
           const agent = agents.find((item) => item.id === task.assigned_agent);
@@ -326,8 +357,22 @@ function ProjectResults({ project, agents, onOpenRun }: { project: Project; agen
           );
         })}
       </div>
+      {preview && <div className="fixed inset-0 z-50 grid place-items-center bg-[#030507]/85 p-3 backdrop-blur-xl sm:p-8" role="dialog" aria-modal="true" aria-label={preview.name}><div className="flex h-full max-h-[900px] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#090d13] shadow-2xl"><div className="flex items-center gap-3 border-b border-white/[0.07] px-4 py-3"><Globe2 size={15} className="text-cyan-300" /><span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-200">{preview.name}</span><a href={`${API_BASE}/api/v1/project-artifacts/${preview.id}/preview`} target="_blank" rel="noreferrer" className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-400"><ExternalLink size={11} /> Neuer Tab</a><button onClick={() => setPreviewId(null)} className="mc-icon-button h-8 w-8 rounded-lg text-slate-400" aria-label="Vorschau schließen"><X size={14} /></button></div><iframe title={preview.name} src={`${API_BASE}/api/v1/project-artifacts/${preview.id}/preview`} sandbox="allow-scripts" className="min-h-0 flex-1 border-0 bg-white" /></div></div>}
     </section>
   );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function syncLabel(status: string) {
+  if (status === "synced") return "Drive";
+  if (status === "pending") return "Drive ausstehend";
+  if (status === "failed") return "Sync fehlgeschlagen";
+  return "lokal gesichert";
 }
 
 function isResultArtifact(value: unknown): value is ResultArtifact {

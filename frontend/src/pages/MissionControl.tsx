@@ -16,6 +16,7 @@ import {
   FolderKanban,
   GitBranch,
   GitPullRequest,
+  Network,
   LayoutDashboard,
   Play,
   PlugZap,
@@ -35,6 +36,7 @@ import { ProjectPortfolioView } from "../components/projects/ProjectPortfolioVie
 import { IntegrationCenter } from "../components/integrations/IntegrationCenter";
 import { InternalWorkView } from "../components/internal/InternalWorkView";
 import { CommandCenterView } from "../components/overview/CommandCenterView";
+import { MissionControlV2 } from "../components/v2/MissionControlV2";
 import { useMissionControlSocket } from "../hooks/useMissionControlSocket";
 import {
   AGENT_STATUS_DOTS,
@@ -144,7 +146,7 @@ export default function MissionControl() {
   const [businessResult, setBusinessResult] = useState<OperationIntakeResponse | null>(null);
   const [projectToOpen, setProjectToOpen] = useState<string | null>(null);
   const [projectCreateRequest, setProjectCreateRequest] = useState(0);
-  const [view, setView] = useState<"overview" | "operations" | "internal" | "projects" | "integrations" | "team">("overview");
+  const [view, setView] = useState<"overview" | "missions" | "operations" | "internal" | "projects" | "integrations" | "team">("overview");
   const [runFilter, setRunFilter] = useState<"attention" | "active" | "history">("attention");
   const [pendingRunIds, setPendingRunIds] = useState<Set<string>>(new Set());
   const [dismissedRunIds, setDismissedRunIds] = useState<Set<string>>(() => {
@@ -283,6 +285,7 @@ export default function MissionControl() {
 
           <nav className="mt-10 space-y-1">
             <NavItem active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard size={17} />} label="Übersicht" />
+            <NavItem active={view === "missions"} onClick={() => setView("missions")} icon={<Network size={17} />} label="Missionen 2.0" />
             <NavItem active={view === "operations"} onClick={() => setView("operations")} icon={<Activity size={17} />} label="Operations" />
             <NavItem active={view === "internal"} onClick={() => setView("internal")} icon={<Wrench size={17} />} label="Intern" badge={runs.filter((run) => run.workstream === "internal" && !terminal.has(run.status)).length || undefined} />
             <NavItem active={view === "projects"} onClick={() => setView("projects")} icon={<FolderKanban size={17} />} label="Projekte" />
@@ -315,7 +318,7 @@ export default function MissionControl() {
             <div className="lg:hidden"><Brand version={health?.version} /></div>
             <div className="hidden lg:block">
               <p className="text-sm text-slate-500">Autonomous agent organization</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight">{view === "overview" ? "Command Center" : view === "operations" ? "Operations" : view === "internal" ? "Internal Operations" : view === "projects" ? "Project Portfolio" : view === "integrations" ? "Integration Center" : "Agent Network"}</h1>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight">{view === "overview" ? "Command Center" : view === "missions" ? "Mission Engine" : view === "operations" ? "Operations" : view === "internal" ? "Internal Operations" : view === "projects" ? "Project Portfolio" : view === "integrations" ? "Integration Center" : "Agent Network"}</h1>
             </div>
             <div className="mc-glass flex items-center gap-2 rounded-full px-3 py-2 text-xs text-slate-400">
               <span className={`h-1.5 w-1.5 rounded-full ${backendConnected ? "bg-emerald-400" : "bg-rose-400"}`} />
@@ -328,6 +331,7 @@ export default function MissionControl() {
 
           <div className="mt-5 grid grid-cols-3 gap-2 lg:hidden">
             <NavItem active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard size={16} />} label="Übersicht" />
+            <NavItem active={view === "missions"} onClick={() => setView("missions")} icon={<Network size={16} />} label="Missionen" />
             <NavItem active={view === "operations"} onClick={() => setView("operations")} icon={<Activity size={16} />} label="Operations" />
             <NavItem active={view === "internal"} onClick={() => setView("internal")} icon={<Wrench size={16} />} label="Intern" />
             <NavItem active={view === "projects"} onClick={() => setView("projects")} icon={<FolderKanban size={16} />} label="Projekte" />
@@ -351,6 +355,8 @@ export default function MissionControl() {
               }}
               onIntegrations={() => setView("integrations")}
             />
+          ) : view === "missions" ? (
+            <MissionControlV2 />
           ) : view === "team" ? (
             <AgentTeamView agents={agents} />
           ) : view === "internal" ? (

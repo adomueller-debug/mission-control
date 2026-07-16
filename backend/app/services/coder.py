@@ -8,6 +8,7 @@ import requests
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from backend.app.models.execution_plan import ExecutionPlan
+from backend.app.services.engineering_quality import BlueprintArtifact
 from backend.app.services.workspace_context import load_workspace_context
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
@@ -76,12 +77,17 @@ def execute_plan(
     plan: ExecutionPlan,
     workspace: str | None = None,
     feedback: str = "",
+    blueprint: BlueprintArtifact | dict | None = None,
 ) -> dict:
     workspace_context = load_workspace_context(plan.expected_files, workspace)
     scope_instruction = (
         f"Erstelle ein eigenständiges neues Produkt ausschließlich unter "
         f"`{plan.output_directory}/`. Nutze dafür `files`; ändere keine bestehenden "
-        "Mission-Control-Dateien. Erzeuge eine kleine, direkt lokal nutzbare erste Version."
+        "Mission-Control-Dateien. Erzeuge ein professionelles, vollständiges React-/Vite-/"
+        "TypeScript-Produkt mit Komponenten, substanziellen Inhalten, responsivem Design, "
+        "Design Tokens, hochwertiger Typografie, klarer Conversion Journey und dynamischen "
+        "Animationen samt Reduced-Motion-Alternative. Eine einfache HTML-Demoseite ist "
+        "nicht ausreichend."
         if plan.creation_mode and plan.output_directory
         else "Ändere nur die für das Ziel erforderlichen bestehenden Dateien."
     )
@@ -100,8 +106,15 @@ Workspace-Kontext:
 Validierungsfeedback:
 {feedback or "Noch keine Validierung ausgeführt."}
 
+Verbindliches BLUEPRINT-Artefakt:
+{json.dumps(blueprint.model_dump() if isinstance(blueprint, BlueprintArtifact) else blueprint or {}, indent=2, ensure_ascii=False)}
+
 Arbeitsmodus:
 {scope_instruction}
+
+Setze den Dateiplan und alle Quality Gates aus BLUEPRINT vollständig um. Wenn der Plan ein
+React-/Vite-/TypeScript-Produkt fordert, müssen package.json, index.html, TypeScript-Einstieg,
+komponentenbasierte App und ein substanzielles Stylesheet direkt buildbar geliefert werden.
 
 Erzeuge höchstens acht präzise Edits oder zwölf kompakte neue Dateien.
 Für jede Änderung soll `search` exakt einmal im aktuellen Dateiinhalt vorkommen.

@@ -11,6 +11,11 @@ from backend.app.core.workspace_security import (
 from backend.app.services.agent_catalog import STEP_TO_AGENT
 from backend.app.services.agent_team import agent_team
 from backend.app.services.coder import execute_plan
+from backend.app.services.engineering_quality import (
+    create_release_candidate,
+    create_technical_blueprint,
+    validate_product_quality,
+)
 from backend.app.services.github_publisher import github_publisher
 from backend.app.services.planner import create_execution_plan
 from backend.app.services.run_service import run_service
@@ -276,6 +281,22 @@ class AutonomousRunEngine:
             run_service.update(run_id, plan=plan.model_dump())
             run_service.add_event(run_id, "plan.created", plan.model_dump())
             self._activate_agent(run_id, "planning", "technical_planner")
+            blueprint = create_technical_blueprint(plan, run["workspace"])
+            if not blueprint.approved:
+                raise RuntimeError("BLUEPRINT hat die technische Umsetzung nicht freigegeben.")
+            blueprint_payload = blueprint.model_dump()
+            run_service.add_event(run_id, "blueprint.created", blueprint_payload)
+            run_service.save_checkpoint(
+                run_id,
+                {
+                    "phase": "blueprint_approved",
+                    "source_workspace": source_workspace,
+                    "sandbox": sandbox,
+                    "originals": originals,
+                    "changed_paths": sorted(changed_paths),
+                    "blueprint": blueprint_payload,
+                },
+            )
 
             feedback = ""
             validation: dict[str, Any] = {"success": False, "checks": []}
@@ -283,7 +304,12 @@ class AutonomousRunEngine:
             while True:
                 run = self._guard(run_id, started_at)
                 self._activate_agent(run_id, "executing", "coder")
-                coder_result = execute_plan(plan, run["workspace"], feedback)
+                coder_result = execute_plan(
+                    plan,
+                    run["workspace"],
+                    feedback,
+                    blueprint,
+                )
                 self._tool_event(
                     run_id, "ollama.generate", {"status": coder_result["status"]}
                 )
@@ -352,6 +378,14 @@ class AutonomousRunEngine:
                 self._guard(run_id, started_at)
                 self._activate_agent(run_id, "validating", "validator")
                 validation = validate_project(run["workspace"])
+                product_validation = validate_product_quality(plan, run["workspace"])
+                validation = {
+                    "success": validation["success"] and product_validation["success"],
+                    "checks": [
+                        *validation["checks"],
+                        *product_validation["checks"],
+                    ],
+                }
                 self._tool_event(run_id, "validate_project", validation)
                 run_service.save_checkpoint(
                     run_id,
@@ -402,9 +436,21 @@ class AutonomousRunEngine:
                 feedback = f"{feedback}\n\n{repair_feedback}"[-30_000:]
 
             run = self._guard(run_id, started_at)
+            self._activate_agent(run_id, "publishing", "github")
+            release_candidate = create_release_candidate(
+                run_id=run_id,
+                task=run["task"],
+                paths=sorted(changed_paths),
+                validation=validation,
+                summary=summary,
+            )
+            run_service.add_event(
+                run_id,
+                "release_candidate.created",
+                release_candidate,
+            )
             publish_result: dict[str, str] = {}
             if run["publish"]:
-                self._activate_agent(run_id, "publishing", "github")
                 validation_summary = "\n".join(
                     f"- {check['name']}: {'OK' if check['success'] else 'FEHLER'}"
                     for check in validation["checks"]
@@ -423,6 +469,8 @@ class AutonomousRunEngine:
                 "summary": summary,
                 "files": sorted(changed_paths),
                 "validation": validation,
+                "blueprint": blueprint_payload,
+                "release_candidate": release_candidate,
                 "publish": publish_result or None,
             }
             run_service.update(run_id, result=result)

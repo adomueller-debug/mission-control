@@ -217,10 +217,17 @@ def test_specialized_executor_persists_structured_result(tmp_path: Path, monkeyp
         artifacts=[
             SpecializedArtifact(
                 title="Research Brief",
-                content="Belastbares Ergebnis mit klarer Annahme.",
+                content=(
+                    "Belastbares Rechercheergebnis mit klar getrennten Fakten, Annahmen, "
+                    "Quellenbezug, Entscheidungskontext und einem konkreten nächsten Schritt. "
+                    "Die Quelle wurde für diesen Test explizit angegeben und die Aussage bleibt "
+                    "auf den dokumentierten Bedarf begrenzt. BOSS kann das Ergebnis priorisieren."
+                ),
+                artifact_type="research_report",
             )
         ],
         next_actions=["Ergebnis durch BOSS priorisieren"],
+        sources=["https://example.test/source"],
     )
     monkeypatch.setattr(
         specialized_run_engine,
@@ -245,6 +252,32 @@ def test_specialized_executor_persists_structured_result(tmp_path: Path, monkeyp
         "agent": "atlas",
     }
     assert completed["result"]["artifacts"][0]["title"] == "Research Brief"
+
+
+def test_specialized_executor_rejects_missing_role_contract_artifacts():
+    output = SpecializedTaskOutput(
+        summary="Design ist angeblich fertig",
+        artifacts=[
+            SpecializedArtifact(
+                title="Lose Notiz",
+                content="Eine nicht umsetzbare Designnotiz.",
+                artifact_type="document",
+            )
+        ],
+    )
+
+    validation = specialized_run_engine._validate_result("design", output)
+
+    assert validation["success"] is False
+    failed = {
+        item["name"] for item in validation["checks"] if not item["success"]
+    }
+    assert failed == {
+        "minimum-artifacts",
+        "required-artifact-types",
+        "artifact-substance",
+        "contract-semantics",
+    }
 
 
 def test_website_sales_pipeline_researches_scores_logs_and_drafts_without_sending():
@@ -1120,7 +1153,7 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "done",
             "edits": [
@@ -1139,6 +1172,11 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr(
         run_engine_module,
+        "validate_product_quality",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
         "review_changes",
         lambda workspace, paths: {"approved": True, "issues": []},
     )
@@ -1152,6 +1190,11 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     assert sandbox_file.read_text(encoding="utf-8") == "hello world"
     assert (tmp_path / "generated.txt").read_text(encoding="utf-8") == "hello"
     assert completed["result"]["files"] == ["generated.txt"]
+    assert completed["result"]["blueprint"]["artifact_type"] == "technical_blueprint"
+    assert completed["result"]["release_candidate"]["status"] == "ready"
+    event_types = {event["type"] for event in run_service.events(run["id"])}
+    assert "blueprint.created" in event_types
+    assert "release_candidate.created" in event_types
     agent_events = [
         event for event in run_service.events(run["id"]) if event["type"].startswith("agent.")
     ]
@@ -1160,7 +1203,7 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
         and event["payload"] == {"from": "boss", "to": "forge_planner"}
         for event in agent_events
     )
-    assert agent_events[-1]["payload"] == {"agent": "forge_reviewer"}
+    assert agent_events[-1]["payload"] == {"agent": "forge_publisher"}
     assert all(
         delegation["status"] == "completed"
         for delegation in agent_team.delegations(run["id"])
@@ -1195,7 +1238,7 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "created",
             "files": [],
@@ -1212,6 +1255,11 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
         run_engine_module,
         "validate_project",
         lambda workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_quality",
+        lambda plan, workspace: {"success": True, "checks": []},
     )
     monkeypatch.setattr(
         run_engine_module,
@@ -1261,7 +1309,7 @@ def test_engine_does_not_spend_repairs_on_validation_infrastructure(
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "changed",
             "files": [{"path": "existing.txt", "content": "changed"}],
@@ -1305,7 +1353,7 @@ def test_engine_rolls_back_after_validation_failure(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "bad",
             "files": [{"path": "existing.txt", "content": "broken"}],
@@ -1338,7 +1386,7 @@ def test_engine_retries_ambiguous_patch(tmp_path: Path, monkeypatch):
     )
     calls = {"count": 0}
 
-    def generate(plan, workspace, feedback):
+    def generate(plan, workspace, feedback, blueprint=None):
         calls["count"] += 1
         search = "value = 1" if calls["count"] == 1 else "value = 1\nvalue = 1"
         return {

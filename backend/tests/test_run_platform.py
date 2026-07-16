@@ -1,0 +1,1319 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+import requests
+from fastapi.testclient import TestClient
+from sqlalchemy import delete
+
+from backend.app.core.workspace_security import (
+    WorkspaceViolation,
+    resolve_workspace_path,
+)
+from backend.app.database.database import SessionLocal
+from backend.app.core.version import MISSION_CONTROL_VERSION
+from backend.app.main import app
+from backend.app.models.run import (
+    AgentDelegation,
+    AgentMemoryEntry,
+    AgentRun,
+    RunCheckpoint,
+    RunEvent,
+)
+from backend.app.models.project import Project, ProjectTask
+from backend.app.models.mission import (
+    IntegrationRequirement,
+    MissionPlan,
+    MissionPlanTask,
+)
+from backend.app.models.execution_plan import ExecutionPlan, PlanStep
+from backend.app.services import run_engine as run_engine_module
+from backend.app.services import github_publisher as publisher_module
+from backend.app.services import integration_verifier as integration_verifier_module
+from backend.app.services import validator as validator_module
+from backend.app.services.agent_catalog import agent_roster
+from backend.app.services.agent_team import agent_team
+from backend.app.services.change_service import change_service
+from backend.app.services.coder import _parse_output
+from backend.app.services.file_selector import select_relevant_files
+from backend.app.services.run_service import run_service
+from backend.app.services.reviewer import review_changes
+from backend.app.services.mission_router import mission_router
+from backend.app.services.operations_router import operations_router
+from backend.app.services.planner import create_execution_plan
+from backend.app.services.project_service import project_service
+from backend.app.services.specialized_run_engine import (
+    SpecializedArtifact,
+    SpecializedTaskOutput,
+    specialized_run_engine,
+)
+from backend.app.services.website_sales_pipeline import SalesLead, WebsiteSalesPipeline
+
+
+@pytest.fixture(autouse=True)
+def clean_runs():
+    yield
+    with SessionLocal() as db:
+        db.execute(delete(MissionPlanTask))
+        db.execute(delete(MissionPlan))
+        db.execute(delete(IntegrationRequirement))
+        db.execute(delete(ProjectTask))
+        db.execute(delete(Project))
+        db.execute(delete(AgentMemoryEntry))
+        db.execute(delete(AgentDelegation))
+        db.execute(delete(RunCheckpoint))
+        db.execute(delete(RunEvent))
+        db.execute(delete(AgentRun))
+        db.commit()
+
+
+def test_integration_center_exposes_secret_status_without_values(
+    tmp_path: Path, monkeypatch
+):
+    secret_file = tmp_path / "mission-control.env"
+    monkeypatch.setenv("MISSION_CONTROL_ENV_FILE", str(secret_file))
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_USERNAME", "agent@example.test")
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.delenv("N8N_GMAIL_CREDENTIAL_ID", raising=False)
+    with TestClient(app) as client:
+        catalog = client.get("/api/v1/integrations")
+        assert catalog.status_code == 200
+        smtp = next(item for item in catalog.json() if item["id"] == "smtp")
+        assert smtp["ready"] is False
+        assert [item["configured"] for item in smtp["secrets"]] == [False]
+        assert "smtp.example.test" not in str(smtp)
+
+        saved = client.post(
+            "/api/v1/integrations/smtp/configuration",
+            json={"values": {"SMTP_PASSWORD": "local-test-secret"}},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["saved_keys"] == ["SMTP_PASSWORD"]
+        assert "local-test-secret" not in str(saved.json())
+        assert "local-test-secret" in secret_file.read_text(encoding="utf-8")
+
+        rejected = client.post(
+            "/api/v1/integrations/smtp/configuration",
+            json={"values": {"UNSAFE_KEY": "value"}},
+        )
+        assert rejected.status_code == 400
+
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Sales System", "workspace": str(tmp_path)},
+        ).json()
+        requirement = client.post(
+            f"/api/v1/projects/{project['id']}/integration-requirements",
+            json={
+                "integration_id": "smtp",
+                "purpose": "Freigegebene Kundenkommunikation",
+            },
+        )
+        assert requirement.status_code == 201
+        assert requirement.json()["purpose"] == "Freigegebene Kundenkommunikation"
+        assert client.get(
+            f"/api/v1/projects/{project['id']}/integration-requirements"
+        ).json()[0]["integration_id"] == "smtp"
+
+
+def test_gmail_oauth_verification_does_not_require_smtp_password(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setenv("N8N_GMAIL_CREDENTIAL_ID", "gmail-credential")
+    monkeypatch.setenv("N8N_BASE_URL", "http://n8n.test")
+    monkeypatch.setenv("N8N_API_KEY", "local-api-key")
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.setattr(
+        integration_verifier_module.requests,
+        "get",
+        lambda *args, **kwargs: Response(),
+    )
+
+    result = integration_verifier_module.verify_integration("smtp")
+
+    assert result["ok"] is True
+    assert result["metadata"] == {"provider": "gmail_oauth", "draft_only": True}
+
+
+def test_google_workspace_verification_reports_real_oauth_failure(monkeypatch):
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    monkeypatch.setenv("GOOGLE_SHEETS_CRM_SPREADSHEET_ID", "sheet-id")
+    monkeypatch.setenv("GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID", "folder-id")
+    monkeypatch.setenv("N8N_GOOGLE_SHEETS_CREDENTIAL_ID", "sheets-credential")
+    monkeypatch.setenv("N8N_SALES_LEAD_WORKFLOW_ID", "sales-workflow")
+    monkeypatch.setenv("N8N_BASE_URL", "http://n8n.test")
+    monkeypatch.setenv("N8N_API_KEY", "local-api-key")
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/api/v1/workflows/sales-workflow"):
+            return Response(
+                {
+                    "active": True,
+                    "nodes": [
+                        {
+                            "type": "n8n-nodes-base.googleSheets",
+                            "credentials": {
+                                "googleSheetsOAuth2Api": {
+                                    "id": "sheets-credential"
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        return Response(
+            {
+                "data": [
+                    {
+                        "id": "4",
+                        "status": "error",
+                        "data": {
+                            "resultData": {
+                                "lastNodeExecuted": "Append Lead to CRM",
+                                "error": {
+                                    "name": "NodeApiError",
+                                    "message": "Client authentication failed",
+                                    "description": "invalid_client: client secret is invalid",
+                                },
+                            }
+                        },
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(integration_verifier_module.requests, "get", fake_get)
+
+    result = integration_verifier_module.verify_integration("google_workspace")
+
+    assert result["ok"] is False
+    assert result["metadata"]["credential_attached"] is True
+    assert result["metadata"]["oauth_action_required"] is True
+    assert result["metadata"]["execution_id"] == "4"
+    assert "Client-ID und Client-Secret" in result["detail"]
+
+
+def test_specialized_executor_persists_structured_result(tmp_path: Path, monkeypatch):
+    output = SpecializedTaskOutput(
+        summary="Research abgeschlossen",
+        findings=["Öffentlicher Bedarf ist dokumentiert"],
+        artifacts=[
+            SpecializedArtifact(
+                title="Research Brief",
+                content="Belastbares Ergebnis mit klarer Annahme.",
+            )
+        ],
+        next_actions=["Ergebnis durch BOSS priorisieren"],
+    )
+    monkeypatch.setattr(
+        specialized_run_engine,
+        "_execute_task",
+        lambda task_type, task, agent: (output, "test.executor"),
+    )
+    run = run_service.create(
+        task="Recherchiere den lokalen Markt",
+        workspace=str(tmp_path),
+        run_kind="task:research",
+        start=False,
+    )
+
+    specialized_run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None
+    assert completed["status"] == "completed"
+    assert completed["run_kind"] == "task:research"
+    assert completed["result"]["executor"] == {
+        "task_type": "research",
+        "agent": "atlas",
+    }
+    assert completed["result"]["artifacts"][0]["title"] == "Research Brief"
+
+
+def test_website_sales_pipeline_researches_scores_logs_and_drafts_without_sending():
+    class Researcher:
+        def find(self, city: str, limit: int):
+            assert city == "Heidelberg"
+            assert limit == 20
+            return [
+                SalesLead(
+                    id="lead-1",
+                    name="Beispielbetrieb",
+                    email="kontakt@example.test",
+                    source_url="https://www.openstreetmap.org/node/1",
+                    website_score=10,
+                    opportunity_score=90,
+                    reasons=["Keine moderne Website"],
+                ),
+                SalesLead(
+                    id="lead-2",
+                    name="Ohne Kontakt",
+                    source_url="https://www.openstreetmap.org/node/2",
+                    website_score=0,
+                    opportunity_score=70,
+                    reasons=["Keine Website"],
+                ),
+            ]
+
+    class Processor:
+        def store_and_draft(self, lead, draft):
+            assert lead.id == "lead-1"
+            assert draft["to"] == "kontakt@example.test"
+            return {"crm_logged": True, "draft_created": True, "sent": False}
+
+    result = WebsiteSalesPipeline().execute(
+        researcher=Researcher(), processor=Processor()
+    )
+
+    assert result["status"] == "awaiting_approval"
+    assert result["lead_count"] == 2
+    assert result["crm_logged_count"] == 1
+    assert result["draft_count"] == 1
+    assert result["sent_count"] == 0
+    assert result["approval_required"] is True
+    assert result["leads"][0]["approval_status"] == "pending"
+    assert result["leads"][1]["approval_status"] == "not_contactable"
+
+
+def test_boss_mission_router_creates_reviewable_plan_and_materializes_tasks(
+    tmp_path: Path, monkeypatch
+):
+    def fail_ollama(goal, project):
+        raise ValueError("offline")
+
+    monkeypatch.setattr(mission_router, "_ollama_plan", fail_ollama)
+    autopilot_projects = []
+    monkeypatch.setattr(
+        project_service,
+        "enable_autopilot",
+        lambda project_id: autopilot_projects.append(project_id),
+    )
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Websites verkaufen",
+                "goal": "Lokalen Unternehmen bessere Websites verkaufen",
+                "category": "business",
+                "workspace": str(tmp_path),
+            },
+        ).json()
+        response = client.post(
+            f"/api/v1/projects/{project['id']}/mission-plans", json={}
+        )
+        assert response.status_code == 201
+        plan = response.json()
+        assert plan["planner_mode"] == "fallback"
+        assert plan["status"] == "draft"
+        assert {task["agent_id"] for task in plan["tasks"]} >= {
+            "atlas",
+            "aura",
+            "forge",
+            "flow",
+            "sentinel",
+            "orbit",
+        }
+        flow = next(task for task in plan["tasks"] if task["agent_id"] == "flow")
+        assert flow["delegation_path"] == ["boss", "aura", "flow"]
+
+        approved = client.post(f"/api/v1/mission-plans/{plan['id']}/approve")
+        assert approved.status_code == 200
+        result = approved.json()
+        assert result["plan"]["status"] == "approved"
+        assert len(result["created_tasks"]) == len(plan["tasks"])
+        assert {item["integration_id"] for item in result["integration_requirements"]} >= {
+            "github",
+            "smtp",
+            "paypal",
+            "n8n",
+            "google_workspace",
+        }
+        refreshed = client.get(f"/api/v1/projects/{project['id']}").json()
+        assert refreshed["task_counts"]["planned"] == len(plan["tasks"])
+        assert autopilot_projects == [project["id"]]
+        tasks_by_id = {task["id"]: task for task in refreshed["tasks"]}
+        for task in refreshed["tasks"]:
+            assert all(dependency in tasks_by_id for dependency in task["dependencies"])
+
+
+def test_project_autopilot_can_be_started_and_paused(tmp_path: Path, monkeypatch):
+    spawned = []
+    monkeypatch.setattr(
+        project_service,
+        "_spawn_autopilot",
+        lambda project_id: spawned.append(project_id),
+    )
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Autonomous project", "workspace": str(tmp_path)},
+        ).json()
+        task = client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={
+                "title": "Research the market",
+                "task_type": "research",
+                "assigned_agent": "atlas",
+            },
+        ).json()
+
+        started = client.post(
+            f"/api/v1/projects/{project['id']}/autopilot/start"
+        )
+        assert started.status_code == 202
+        assert started.json()["autopilot_enabled"] is True
+        assert started.json()["status"] == "active"
+        assert spawned == [project["id"]]
+
+        stopped = client.post(
+            f"/api/v1/projects/{project['id']}/autopilot/stop"
+        )
+        assert stopped.status_code == 200
+        assert stopped.json()["autopilot_enabled"] is False
+        assert stopped.json()["status"] == "paused"
+
+        project_service.update_task(task["id"], {"status": "blocked"})
+        resumed = client.post(
+            f"/api/v1/projects/{project['id']}/autopilot/start"
+        )
+        assert resumed.status_code == 202
+        assert resumed.json()["tasks"][0]["status"] == "planned"
+        assert spawned == [project["id"], project["id"]]
+
+
+def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
+    tmp_path: Path, monkeypatch
+):
+    captured = {}
+
+    def fake_send(payload):
+        captured.update(payload)
+        return {
+            "status": "project_created",
+            "project_id": "project-from-n8n",
+            "mission_plan_id": "plan-from-n8n",
+            "task_count": 6,
+        }
+
+    monkeypatch.setattr(operations_router, "_send_to_n8n", fake_send)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/operations/intake",
+            json={
+                "task": "Verdiene 500€ mit Websites für lokale Unternehmen in Heidelberg",
+                "workspace": str(tmp_path),
+            },
+        )
+
+    assert response.status_code == 202
+    assert response.json()["route"]["workflow"] == "website_sales"
+    assert response.json()["project_id"] == "project-from-n8n"
+    assert captured["max_leads"] == 20
+    assert captured["offer_min"] == 200
+    assert captured["offer_max"] == 500
+    assert captured["outreach_channel"] == "E-Mail-Entwurf"
+    assert captured["outreach_approval"] is False
+    assert "Alle Branchen" in captured["preferred_industries"]
+    assert "cineastisch" in captured["animation_style"]
+
+
+def test_operations_intake_explains_n8n_timeout_without_suggesting_resubmit(
+    tmp_path: Path, monkeypatch
+):
+    def timeout(_payload):
+        raise requests.ReadTimeout("n8n is still processing")
+
+    monkeypatch.setattr(operations_router, "_send_to_n8n", timeout)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/operations/intake",
+            json={
+                "task": "Finde Website-Leads in Heidelberg",
+                "workspace": str(tmp_path),
+            },
+        )
+
+    assert response.status_code == 504
+    assert "Projektboard prüfen" in response.json()["detail"]
+    assert "erneut absendest" in response.json()["detail"]
+
+
+def test_operations_router_keeps_mission_control_changes_on_coding_engine(
+    tmp_path: Path, monkeypatch
+):
+    expected = {"id": "run-1", "status": "queued"}
+    captured = {}
+
+    def create_run(**kwargs):
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(run_service, "create", create_run)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/operations/intake",
+            json={
+                "task": "Implementiere im Mission Control Dashboard eine neue API-Ansicht",
+                "workspace": str(tmp_path),
+            },
+        )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "run_created"
+    assert response.json()["route"]["workflow"] == "run_engine"
+    assert response.json()["route"]["workstream"] == "internal"
+    assert response.json()["run"] == expected
+    assert captured["workstream"] == "internal"
+
+
+def test_operations_router_collects_context_for_unknown_business_mission(
+    tmp_path: Path,
+):
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/operations/intake",
+            json={
+                "task": "Baue ein neues Geschäftsfeld auf",
+                "workspace": str(tmp_path),
+            },
+        )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "needs_input"
+    assert {item["field"] for item in response.json()["questions"]} == {
+        "project_name",
+        "desired_outcome",
+        "target_audience",
+        "external_action_policy",
+    }
+
+
+def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
+    workflow_path = (
+        Path(__file__).resolve().parents[2]
+        / "n8n"
+        / "workflows"
+        / "website-sales-heidelberg.json"
+    )
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    nodes = {node["name"]: node for node in workflow["nodes"]}
+    normalize = nodes["Normalize Mission & Build Questions"]["parameters"]["jsCode"]
+    sheets = nodes["Log Mission in Google Sheets CRM"]
+
+    assert "Math.min(Number(input.max_leads || 20), 20)" in normalize
+    assert "outreach_approval: false" in normalize
+    assert "Starterangebot" in normalize
+    assert sheets["type"] == "n8n-nodes-base.googleSheets"
+    assert sheets["parameters"]["sheetName"]["value"] == "Aktivitäten"
+    assert workflow["connections"]["Approve & Materialize Tasks"]["main"][0][0][
+        "node"
+    ] == "Log Mission in Google Sheets CRM"
+    assert workflow["connections"]["Log Mission in Google Sheets CRM"]["main"][0][
+        0
+    ]["node"] == "Return Mission Started"
+    assert workflow["connections"]["Return Mission Started"]["main"][0][0][
+        "node"
+    ] == "Research Leads & Create Drafts"
+    response_body = nodes["Return Mission Started"]["parameters"]["responseBody"]
+    assert "status: 'project_created'" in response_body
+    assert "research_status: 'queued'" in response_body
+
+
+def test_project_portfolio_persists_tasks_and_agent_assignments(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+    with TestClient(app) as client:
+        project_response = client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Websites für lokale Unternehmen",
+                "goal": "Ein wiederholbares Verkaufs- und Liefermodell aufbauen",
+                "category": "business",
+                "status": "planning",
+                "workspace": str(tmp_path),
+                "owner_agent": "boss",
+                "deadline": "2026-08-31T18:00:00Z",
+                "budget_cents": 25000,
+                "revenue_target_cents": 50000,
+            },
+        )
+        assert project_response.status_code == 201
+        project_id = project_response.json()["id"]
+
+        task_response = client.post(
+            f"/api/v1/projects/{project_id}/tasks",
+            json={
+                "title": "Angebot und Zielgruppe recherchieren",
+                "task_type": "research",
+                "priority": 1,
+                "assigned_agent": "atlas",
+            },
+        )
+        assert task_response.status_code == 201
+        task_id = task_response.json()["id"]
+
+        projects = client.get("/api/v1/projects")
+        assert projects.status_code == 200
+        project = projects.json()[0]
+        assert project["task_counts"] == {"backlog": 1}
+        assert project["owner_agent"] == "boss"
+        assert project["budget_cents"] == 25000
+        assert project["revenue_target_cents"] == 50000
+        assert project["deadline"].startswith("2026-08-31")
+        assert project["tasks"][0]["assigned_agent"] == "atlas"
+        assert project["tasks"][0]["executable"] is True
+
+        updated = client.patch(
+            f"/api/v1/project-tasks/{task_id}",
+            json={"status": "in_progress"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["status"] == "in_progress"
+
+        started = client.post(f"/api/v1/project-tasks/{task_id}/run", json={})
+        assert started.status_code == 202
+        assert started.json()["run"]["run_kind"] == "task:research"
+        assert started.json()["task"]["run_id"] == started.json()["run"]["id"]
+
+
+def test_coding_project_task_starts_run_and_tracks_completion(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Mission Control", "workspace": str(tmp_path)},
+        ).json()
+        task = client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={
+                "title": "Health-Endpunkt erweitern",
+                "task_type": "coding",
+                "assigned_agent": "forge",
+            },
+        ).json()
+        started = client.post(f"/api/v1/project-tasks/{task['id']}/run", json={})
+        assert started.status_code == 202
+        run_id = started.json()["run"]["id"]
+        assert started.json()["task"]["run_id"] == run_id
+        assert started.json()["run"]["workstream"] == "project"
+
+        run_service.transition(run_id, "completed")
+        refreshed = client.get(f"/api/v1/projects/{project['id']}").json()
+        assert refreshed["progress"] == 100
+        assert refreshed["tasks"][0]["status"] == "completed"
+
+
+def test_workspace_rejects_parent_and_symlink_escape(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+
+    with pytest.raises(WorkspaceViolation):
+        resolve_workspace_path(workspace, "../outside.txt")
+
+    link = workspace / "link.txt"
+    link.symlink_to(outside)
+    with pytest.raises(WorkspaceViolation):
+        resolve_workspace_path(workspace, "link.txt")
+
+
+def test_health_exposes_current_mission_control_version():
+    with TestClient(app) as client:
+        health = client.get("/api/v1/health")
+        root = client.get("/")
+        openapi = client.get("/openapi.json")
+
+    assert health.status_code == 200
+    assert health.json()["version"] == MISSION_CONTROL_VERSION
+    assert root.json()["version"] == MISSION_CONTROL_VERSION
+    assert openapi.json()["info"]["version"] == MISSION_CONTROL_VERSION
+
+
+def test_structured_coder_output():
+    result = _parse_output(
+        '```json\n{"summary":"ok","edits":[{"path":"a.py","search":"x = 1","replacement":"x = 2"}]}\n```'
+    )
+    assert result.summary == "ok"
+    assert result.edits[0].path == "a.py"
+    assert result.edits[0].occurrence is None
+
+    extracted = _parse_output(
+        'Ergebnis:\n{"summary":"site","files":[{"path":"projects/demo/index.html","content":"<h1>Demo</h1>"}]}\nFertig.'
+    )
+    assert extracted.files[0].path == "projects/demo/index.html"
+
+    with pytest.raises(ValueError):
+        _parse_output("not-json")
+
+
+def test_planner_uses_isolated_product_directory_for_new_website(tmp_path: Path):
+    plan = create_execution_plan(
+        "Projekt: Websites Heidelberg\nAufgabe: Lieferbaren Website-Prototyp bauen",
+        workspace=str(tmp_path),
+    )
+
+    assert plan.creation_mode is True
+    assert plan.output_directory == "projects/websites-heidelberg"
+    assert plan.expected_files == []
+
+
+def test_file_selector_understands_compound_root_endpoint_task(tmp_path: Path):
+    backend = tmp_path / "backend" / "app"
+    tests = tmp_path / "backend" / "tests"
+    backend.mkdir(parents=True)
+    tests.mkdir(parents=True)
+    (backend / "main.py").write_text(
+        '@app.get("/")\ndef root():\n    return {"status": "running"}\n',
+        encoding="utf-8",
+    )
+    (backend / "unrelated.py").write_text("def helper():\n    pass\n", encoding="utf-8")
+    (tests / "test_main.py").write_text(
+        "def test_root():\n    pass\n", encoding="utf-8"
+    )
+
+    selected = select_relevant_files(
+        "Ergänze den Root-Endpunkt und füge einen automatisierten Test hinzu",
+        workspace=str(tmp_path),
+    )
+
+    assert selected[0] == "backend/app/main.py"
+    assert "backend/tests/test_main.py" in selected
+
+
+def test_reviewer_rejects_duplicate_statements(tmp_path: Path):
+    target = tmp_path / "test_example.py"
+    target.write_text(
+        "def test_value():\n"
+        "    with client():\n"
+        "        value = 1\n"
+        "    with client():\n"
+        "        value = 1\n",
+        encoding="utf-8",
+    )
+
+    review = review_changes(str(tmp_path), ["test_example.py"])
+
+    assert review["approved"] is False
+    assert "Doppeltes Statement" in review["issues"][0]
+
+
+def test_run_service_persists_events_and_report(tmp_path: Path):
+    run = run_service.create(
+        task="Create a safe file",
+        workspace=str(tmp_path),
+        start=False,
+    )
+    run_service.transition(run["id"], "planning", "planner")
+    run_service.add_event(run["id"], "tool.completed", {"api_key": "hidden"})
+
+    events = run_service.events(run["id"])
+    assert events[-1]["payload"]["api_key"] == "[REDACTED]"
+    assert "Create a safe file" in (run_service.report(run["id"]) or "")
+
+    with pytest.raises(ValueError, match="bereits"):
+        run_service.create(task="Second run", workspace=str(tmp_path), start=False)
+
+
+def test_failed_run_can_be_resumed(tmp_path: Path, monkeypatch):
+    run = run_service.create(task="Resume me", workspace=str(tmp_path), start=False)
+    run_service.transition(run["id"], "failed")
+    run_service.save_checkpoint(run["id"], {"phase": "broken"})
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+
+    resumed = run_service.resume(run["id"])
+
+    assert resumed is not None
+    assert resumed["status"] == "queued"
+    assert resumed["cancel_requested"] is False
+    assert run_service.load_checkpoint(run["id"]) == {}
+
+
+def test_run_api_contract_and_file_boundary(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+    (tmp_path / "inside.txt").write_text("ok", encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/runs",
+            json={"task": "Inspect the project", "workspace": str(tmp_path)},
+        )
+        assert response.status_code == 202
+        run_id = response.json()["id"]
+        assert client.get(f"/api/v1/runs/{run_id}").status_code == 200
+        assert client.get("/api/v1/config").json()["model"] == "qwen2.5:7b"
+        assert (
+            client.get("/api/v1/config").json()["defaults"]["max_repair_attempts"]
+            == 5
+        )
+        assert client.get(f"/api/v1/runs/{run_id}/diff").status_code == 409
+        agents = client.get(f"/api/v1/runs/{run_id}/agents")
+        assert agents.status_code == 200
+        assert [agent["id"] for agent in agents.json()] == [
+            "boss",
+            "forge",
+            "aura",
+            "sage",
+            "atlas",
+            "flow",
+            "orbit",
+            "sentinel",
+            "mercury",
+            "forge_planner",
+            "forge_builder",
+            "forge_reviewer",
+            "forge_publisher",
+        ]
+        legacy_coder = client.get("/api/v1/agents/coder")
+        assert legacy_coder.status_code == 200
+        assert legacy_coder.json()["id"] == "forge_builder"
+        statuses = client.get("/api/v1/agent-statuses")
+        assert statuses.status_code == 200
+        assert {status["id"] for status in statuses.json()} >= {
+            "offline",
+            "active",
+            "waiting",
+            "blocked",
+            "paused",
+            "error",
+        }
+        memory = client.post(
+            "/api/v1/agents/boss/memory",
+            json={"content": "API zuerst absichern", "kind": "decision", "run_id": run_id},
+        )
+        assert memory.status_code == 201
+        assert client.get(
+            "/api/v1/agents/boss/memory", params={"run_id": run_id}
+        ).json()[0]["kind"] == "decision"
+        delegation = client.post(
+            f"/api/v1/runs/{run_id}/delegations",
+            json={
+                "from_agent": "boss",
+                "to_agent": "forge",
+                "task": "Technische Umsetzung koordinieren",
+            },
+        )
+        assert delegation.status_code == 201
+        assert client.get(f"/api/v1/runs/{run_id}/delegations").json()[0][
+            "to_agent"
+        ] == "forge"
+        assert client.get(f"/api/v1/runs/{run_id}/events").status_code == 200
+        assert (
+            client.get(
+                f"/api/v1/runs/{run_id}/files/content",
+                params={"path": "inside.txt"},
+            ).json()["content"]
+            == "ok"
+        )
+        escaped = client.get(
+            f"/api/v1/runs/{run_id}/files/content",
+            params={"path": "../outside.txt"},
+        )
+        assert escaped.status_code == 403
+        assert client.post(f"/api/v1/runs/{run_id}/cancel").status_code == 200
+        report = client.get(f"/api/v1/runs/{run_id}/report")
+        assert report.status_code == 200
+        assert report.headers["content-type"].startswith("text/markdown")
+
+
+def test_agent_roster_maps_runtime_steps_to_canonical_roles():
+    roster = agent_roster(
+        {
+            "current_step": "validator",
+            "status": "validating",
+            "publish": False,
+        }
+    )
+
+    assert [agent["status"] for agent in roster] == [
+        "completed",
+        "active",
+        "offline",
+        "offline",
+        "offline",
+        "offline",
+        "offline",
+        "offline",
+        "offline",
+        "completed",
+        "completed",
+        "active",
+        "waiting",
+    ]
+
+    assert next(agent for agent in roster if agent["id"] == "forge_builder")[
+        "legacy_ids"
+    ] == ["coder", "builder"]
+
+    failed = agent_roster(
+        {"current_step": "coder", "status": "failed", "publish": False}
+    )
+    assert next(agent for agent in failed if agent["id"] == "forge")[
+        "status"
+    ] == "error"
+    assert next(agent for agent in failed if agent["id"] == "forge_builder")[
+        "status"
+    ] == "error"
+
+
+def test_agent_memory_and_hierarchical_delegation_are_persistent(tmp_path: Path):
+    run = run_service.create(task="Build feature", workspace=str(tmp_path), start=False)
+
+    memory = agent_team.remember(
+        "boss", "Priorität: sichere API", kind="decision", run_id=run["id"]
+    )
+    route = agent_team.handoff(
+        run["id"], "boss", "forge_builder", "Implementiere die API"
+    )
+
+    assert memory["agent_id"] == "boss"
+    assert agent_team.memory("boss", run_id=run["id"])[0]["kind"] == "decision"
+    assert [(item["from_agent"], item["to_agent"]) for item in route] == [
+        ("boss", "forge"),
+        ("forge", "forge_builder"),
+    ]
+
+
+def test_completed_run_changes_can_be_previewed_and_applied_safely(tmp_path: Path):
+    source = tmp_path / "source"
+    sandbox = tmp_path / "sandbox"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "tests@mission-control.local"],
+        cwd=source,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Mission Control Tests"],
+        cwd=source,
+        check=True,
+    )
+    target = source / "value.txt"
+    target.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "value.txt"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], cwd=source, check=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "test-run", str(sandbox)],
+        cwd=source,
+        check=True,
+    )
+    (sandbox / "value.txt").write_text("after\n", encoding="utf-8")
+    (sandbox / ".venv").symlink_to(tmp_path, target_is_directory=True)
+    run = {
+        "id": "run-1",
+        "status": "completed",
+        "workspace": str(sandbox),
+        "source_workspace": str(source),
+    }
+
+    preview = change_service.preview(run)
+    assert preview["can_apply"] is True
+    assert preview["files"] == ["value.txt"]
+    assert preview["untracked_files"] == []
+
+    local_file = source / "local.txt"
+    local_file.write_text("user work\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="lokale Änderungen"):
+        change_service.apply(run)
+    local_file.unlink()
+
+    applied = change_service.apply(run)
+    assert applied["applied"] is True
+    assert len(applied["commit"]) == 40
+    assert target.read_text(encoding="utf-8") == "after\n"
+    with pytest.raises(RuntimeError):
+        change_service.apply(run)
+
+
+def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypatch):
+    (tmp_path / "generated.txt").write_text("hello", encoding="utf-8")
+    run = run_service.create(
+        task="Add a generated file",
+        workspace=str(tmp_path),
+        start=False,
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "execute_plan",
+        lambda plan, workspace, feedback: {
+            "status": "completed",
+            "summary": "done",
+            "edits": [
+                {
+                    "path": "generated.txt",
+                    "search": "hello",
+                    "replacement": "hello world",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None
+    assert completed["status"] == "completed"
+    sandbox_file = Path(completed["workspace"]) / "generated.txt"
+    assert sandbox_file.read_text(encoding="utf-8") == "hello world"
+    assert (tmp_path / "generated.txt").read_text(encoding="utf-8") == "hello"
+    assert completed["result"]["files"] == ["generated.txt"]
+    agent_events = [
+        event for event in run_service.events(run["id"]) if event["type"].startswith("agent.")
+    ]
+    assert any(
+        event["type"] == "agent.handoff"
+        and event["payload"] == {"from": "boss", "to": "forge_planner"}
+        for event in agent_events
+    )
+    assert agent_events[-1]["payload"] == {"agent": "forge_reviewer"}
+    assert all(
+        delegation["status"] == "completed"
+        for delegation in agent_team.delegations(run["id"])
+    )
+
+
+def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypatch):
+    run = run_service.create(
+        task="Create a website prototype",
+        workspace=str(tmp_path),
+        start=False,
+    )
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build the initial product files",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[
+            PlanStep(
+                id=1,
+                title="Build prototype",
+                description="Create the initial HTML file",
+                agent="coder",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "create_execution_plan",
+        lambda task, workspace: plan,
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "execute_plan",
+        lambda plan, workspace, feedback: {
+            "status": "completed",
+            "summary": "created",
+            "files": [],
+            "edits": [
+                {
+                    "path": "projects/demo/index.html",
+                    "search": "missing file",
+                    "replacement": "<h1>Demo</h1>",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None
+    assert completed["status"] == "completed"
+    assert completed["repair_attempts"] == 0
+    generated = Path(completed["workspace"]) / "projects/demo/index.html"
+    assert generated.read_text(encoding="utf-8") == "<h1>Demo</h1>"
+    assert completed["result"]["files"] == ["projects/demo/index.html"]
+
+
+def test_validator_resolves_homebrew_npm_for_autostart_processes(
+    tmp_path: Path, monkeypatch
+):
+    homebrew = tmp_path / "homebrew"
+    homebrew.mkdir()
+    npm = homebrew / "npm"
+    npm.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(validator_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        validator_module,
+        "Path",
+        lambda value: homebrew if value == "/opt/homebrew/bin" else Path(value),
+    )
+
+    assert validator_module.resolve_executable("npm") == str(npm)
+
+
+def test_engine_does_not_spend_repairs_on_validation_infrastructure(
+    tmp_path: Path, monkeypatch
+):
+    target = tmp_path / "existing.txt"
+    target.write_text("original", encoding="utf-8")
+    run = run_service.create(
+        task="Validate without npm",
+        workspace=str(tmp_path),
+        max_repair_attempts=5,
+        start=False,
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "execute_plan",
+        lambda plan, workspace, feedback: {
+            "status": "completed",
+            "summary": "changed",
+            "files": [{"path": "existing.txt", "content": "changed"}],
+        },
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {
+            "success": False,
+            "checks": [
+                {
+                    "name": "frontend-build",
+                    "success": False,
+                    "output": "npm missing",
+                    "failure_class": "infrastructure",
+                }
+            ],
+        },
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    failed = run_service.get(run["id"])
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["repair_attempts"] == 0
+    assert "Validierungsinfrastruktur" in failed["error"]
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_engine_rolls_back_after_validation_failure(tmp_path: Path, monkeypatch):
+    target = tmp_path / "existing.txt"
+    target.write_text("original", encoding="utf-8")
+    run = run_service.create(
+        task="Break and repair",
+        workspace=str(tmp_path),
+        max_repair_attempts=0,
+        start=False,
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "execute_plan",
+        lambda plan, workspace, feedback: {
+            "status": "completed",
+            "summary": "bad",
+            "files": [{"path": "existing.txt", "content": "broken"}],
+        },
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {
+            "success": False,
+            "checks": [{"name": "test", "success": False}],
+        },
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    failed = run_service.get(run["id"])
+    assert failed is not None and failed["status"] == "failed"
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_engine_retries_ambiguous_patch(tmp_path: Path, monkeypatch):
+    target = tmp_path / "value.py"
+    target.write_text("value = 1\nvalue = 1\n", encoding="utf-8")
+    run = run_service.create(
+        task="Update one value",
+        workspace=str(tmp_path),
+        max_repair_attempts=1,
+        start=False,
+    )
+    calls = {"count": 0}
+
+    def generate(plan, workspace, feedback):
+        calls["count"] += 1
+        search = "value = 1" if calls["count"] == 1 else "value = 1\nvalue = 1"
+        return {
+            "status": "completed",
+            "summary": "updated",
+            "edits": [
+                {
+                    "path": "value.py",
+                    "search": search,
+                    "replacement": "value = 2\nvalue = 1",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(run_engine_module, "execute_plan", generate)
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None and completed["status"] == "completed"
+    assert completed["repair_attempts"] == 1
+    assert calls["count"] == 2
+
+
+def test_edit_batch_is_atomic_when_later_edit_is_ambiguous(tmp_path: Path):
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text("value = 1\n", encoding="utf-8")
+    second.write_text("item = 1\nitem = 1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exakt einmal"):
+        run_engine_module.run_engine._apply_edits(
+            "unused",
+            str(tmp_path),
+            [
+                {
+                    "path": "first.py",
+                    "search": "value = 1",
+                    "replacement": "value = 2",
+                },
+                {
+                    "path": "second.py",
+                    "search": "item = 1",
+                    "replacement": "item = 2",
+                },
+            ],
+            {},
+        )
+
+    assert first.read_text(encoding="utf-8") == "value = 1\n"
+    assert second.read_text(encoding="utf-8") == "item = 1\nitem = 1\n"
+
+
+def test_edit_can_target_an_explicit_duplicate_occurrence(tmp_path: Path):
+    target = tmp_path / "values.py"
+    target.write_text("value = 1\nvalue = 1\n", encoding="utf-8")
+    run = run_service.create(task="Edit duplicate", workspace=str(tmp_path), start=False)
+
+    run_engine_module.run_engine._apply_edits(
+        run["id"],
+        str(tmp_path),
+        [
+            {
+                "path": "values.py",
+                "search": "value = 1",
+                "replacement": "value = 2",
+                "occurrence": 2,
+            }
+        ],
+        {},
+    )
+
+    assert target.read_text(encoding="utf-8") == "value = 1\nvalue = 2\n"
+
+
+def test_repair_limit_does_not_overcount_attempts(tmp_path: Path):
+    run = run_service.create(
+        task="Fail safely",
+        workspace=str(tmp_path),
+        max_repair_attempts=1,
+        start=False,
+    )
+    failure = {"success": False, "checks": []}
+
+    run_engine_module.run_engine._schedule_repair(run["id"], failure)
+    with pytest.raises(RuntimeError, match="ausgeschöpft"):
+        run_engine_module.run_engine._schedule_repair(run["id"], failure)
+
+    current = run_service.get(run["id"])
+    assert current is not None
+    assert current["repair_attempts"] == 1
+    assert run_service.events(run["id"])[-1]["type"] == "repair.exhausted"
+
+
+def test_github_publisher_creates_pr_and_enables_auto_merge(
+    tmp_path: Path, monkeypatch
+):
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], cwd: Path, timeout: int = 120) -> str:
+        calls.append(command)
+        if command[:3] == ["git", "branch", "--show-current"]:
+            return "main"
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M generated.txt"
+        if command[:4] == ["git", "remote", "get-url", "origin"]:
+            return "https://github.com/example/repo.git"
+        return ""
+
+    monkeypatch.setattr(publisher_module, "_run", fake_run)
+    github_calls: list[str] = []
+
+    def fake_github(method: str, url: str, *, token: str, payload: dict) -> dict:
+        github_calls.append(url)
+        if url.endswith("/pulls"):
+            return {
+                "html_url": "https://github.com/example/repo/pull/1",
+                "node_id": "PR_node",
+            }
+        return {"data": {"enablePullRequestAutoMerge": {}}}
+
+    monkeypatch.setattr(publisher_module, "_github_request", fake_github)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    result = publisher_module.github_publisher.publish(
+        workspace=str(tmp_path),
+        run_id="12345678-abcd",
+        task="Add report export",
+        paths=["generated.txt"],
+        validation_summary="all green",
+    )
+
+    assert result["pr_url"].endswith("/pull/1")
+    assert github_calls[-1] == "https://api.github.com/graphql"

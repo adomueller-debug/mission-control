@@ -1,0 +1,237 @@
+{
+  "name": "Mission Control – Website Sales Heidelberg",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control-website-sales",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000001",
+      "name": "Mission Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-760, 0],
+      "webhookId": "mission-control-website-sales"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst data = {\n  goal: input.goal || 'Mit dem Verkauf moderner Websites an lokale Unternehmen Umsatz erzielen',\n  city: input.city || 'Heidelberg',\n  target_revenue: Number(input.target_revenue || 500),\n  preferred_industries: input.preferred_industries || 'Alle Branchen, die lokal über eine Website Kunden gewinnen können; dynamisch nach Bedarf, Website-Defizit, Kontaktierbarkeit und Auftragswert priorisieren',\n  website_style: input.website_style || 'minimalistisch, modern und clean',\n  color_direction: input.color_direction || 'modern, minimalistisch und clean; unternehmensspezifisch',\n  animation_style: input.animation_style || 'sehr dynamisch und cineastisch mit scrollgebundenen Szenen, maskierten Übergängen und Parallax; Reduced-Motion- und Mobile-Fallback vorsehen',\n  key_sections: input.key_sections || 'Unternehmensspezifisch aus Google Maps, bestehender Website und weiteren öffentlichen Informationen ableiten',\n  offer_price: Number(input.offer_price || 350),\n  offer_min: Number(input.offer_min || 200),\n  offer_max: Number(input.offer_max || 500),\n  max_leads: Math.min(Number(input.max_leads || 20), 20),\n  outreach_channel: input.outreach_channel || 'E-Mail-Entwurf',\n  outreach_approval: false,\n  crm_spreadsheet_id: input.crm_spreadsheet_id || '1uCKDobkcfjjOOmRUGeUVCwtAW5ddw49Smo7nWz9hysY',\n  reference_folder_id: input.reference_folder_id || '1O-oENk03wkd6DcnWBVeiKBGocb4MQ5VL',\n  reference_video_ids: input.reference_video_ids || ['1xRcjUjZmaCYzU0-5dKdAAfzimvIssImn', '1UjVzKF4wIWt1eMBBxlguh_EoOwKPaWwv'],\n};\nconst required = ['preferred_industries', 'website_style', 'animation_style', 'key_sections', 'outreach_channel'];\nconst missing = required.filter((key) => !data[key]);\nconst questionMap = {\n  preferred_industries: 'Welche Branchen sollen priorisiert werden?',\n  website_style: 'Wie soll die Website wirken?',\n  animation_style: 'Wie intensiv sollen Scroll-Animationen sein?',\n  key_sections: 'Welche Bereiche soll die Website enthalten?',\n  outreach_channel: 'Welcher Kontaktkanal ist erlaubt?',\n};\nconst questions = missing.map((key) => ({ field: key, question: questionMap[key] }));\nconst missionGoal = `${data.goal}. Region: ${data.city}. Zielumsatz: ${data.target_revenue} EUR, ohne Umsatzgarantie. Branchenoffen nach Kundengewinnungspotenzial priorisieren: ${data.preferred_industries}. Website-Stil: ${data.website_style}; Farbwelt: ${data.color_direction}; Scroll-Animationen: ${data.animation_style}. Bereiche: ${data.key_sections}. Starterangebot: ${data.offer_min}-${data.offer_max} EUR, Richtwert ${data.offer_price} EUR. Maximal ${data.max_leads} sorgfältig qualifizierte Leads. Kontaktkanal: ${data.outreach_channel}; niemals automatisch versenden. Designreferenzen: Drive-Ordner ${data.reference_folder_id}, Videos ${data.reference_video_ids.join(', ')}. Datenschutz, Impressum, Quellen, Opt-out und Audit-Trail beachten.`;\nreturn [{ json: { ready: missing.length === 0, questions, data, mission_goal: missionGoal } }];"
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000002",
+      "name": "Normalize Mission & Build Questions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-520, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "mission-ready-condition",
+              "leftValue": "={{ $json.ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000003",
+      "name": "Requirements Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-280, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'needs_input', message: 'Bitte beantworte die Rückfragen, bevor BOSS das Projekt startet.', questions: $json.questions, defaults: { city: $json.data.city, target_revenue: $json.data.target_revenue, max_leads: $json.data.max_leads } }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000004",
+      "name": "Return Clarifying Questions",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [-20, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/v1/projects",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: `Website-Verkauf ${$('Normalize Mission & Build Questions').first().json.data.city}`, goal: $('Normalize Mission & Build Questions').first().json.mission_goal, description: 'Autonom vorbereitete Vertriebs- und Liefermission für moderne Websites lokaler Unternehmen.', category: 'business', status: 'planning', workspace: '/Users/adrianmuller/AI-Platform', owner_agent: 'boss', budget_cents: 0, revenue_target_cents: Math.round($('Normalize Mission & Build Questions').first().json.data.target_revenue * 100) }) }}",
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000005",
+      "name": "Create Mission Control Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/api/v1/projects/{{ $json.id }}/mission-plans",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ goal: $('Normalize Mission & Build Questions').first().json.mission_goal }) }}",
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000006",
+      "name": "BOSS Creates Mission Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/api/v1/mission-plans/{{ $json.id }}/approve",
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000007",
+      "name": "Approve & Materialize Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'project_created', message: 'BOSS hat das Projekt geplant und delegiert. Die Lead-Recherche läuft im Hintergrund; E-Mails werden ausschließlich als Entwürfe vorbereitet.', project_id: $('Approve & Materialize Tasks').first().json.plan.project_id, mission_plan_id: $('Approve & Materialize Tasks').first().json.plan.id, task_count: $('Approve & Materialize Tasks').first().json.created_tasks.length, required_integrations: $('Approve & Materialize Tasks').first().json.integration_requirements.map(item => ({ id: item.integration_id, ready: item.ready })), research_status: 'queued' }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000008",
+      "name": "Return Mission Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1280, -100]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1uCKDobkcfjjOOmRUGeUVCwtAW5ddw49Smo7nWz9hysY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Aktivitäten",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Aktivitäts-ID": "={{ 'MISSION-' + $('Approve & Materialize Tasks').first().json.plan.id }}",
+            "Lead-ID": "",
+            "Zeitpunkt": "={{ $now.toISO() }}",
+            "Typ": "Mission gestartet",
+            "Kanal": "Intern",
+            "Agent": "BOSS / FLOW",
+            "Zusammenfassung": "={{ $('Normalize Mission & Build Questions').first().json.mission_goal }}",
+            "Ergebnis": "Projekt erstellt und Aufgaben delegiert",
+            "Nächste Aktion": "ATLAS recherchiert bis zu 20 Leads",
+            "Freigabe erforderlich": "Ja – E-Mails nur als Entwurf"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {"id": "Aktivitäts-ID", "displayName": "Aktivitäts-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Lead-ID", "displayName": "Lead-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Zeitpunkt", "displayName": "Zeitpunkt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Typ", "displayName": "Typ", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Kanal", "displayName": "Kanal", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Agent", "displayName": "Agent", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Zusammenfassung", "displayName": "Zusammenfassung", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Ergebnis", "displayName": "Ergebnis", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Nächste Aktion", "displayName": "Nächste Aktion", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "Freigabe erforderlich", "displayName": "Freigabe erforderlich", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ]
+        },
+        "options": {}
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000009",
+      "name": "Log Mission in Google Sheets CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [760, -100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qghI4J00QviooTnf",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/v1/sales/website-pipeline/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ city: $('Normalize Mission & Build Questions').first().json.data.city, max_leads: $('Normalize Mission & Build Questions').first().json.data.max_leads }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "d1ceeb17-1a4c-4ea3-a602-001000000010",
+      "name": "Research Leads & Create Drafts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1020, -100]
+    }
+  ],
+  "connections": {
+    "Mission Intake Webhook": {
+      "main": [[{"node": "Normalize Mission & Build Questions", "type": "main", "index": 0}]]
+    },
+    "Normalize Mission & Build Questions": {
+      "main": [[{"node": "Requirements Complete?", "type": "main", "index": 0}]]
+    },
+    "Requirements Complete?": {
+      "main": [
+        [{"node": "Create Mission Control Project", "type": "main", "index": 0}],
+        [{"node": "Return Clarifying Questions", "type": "main", "index": 0}]
+      ]
+    },
+    "Create Mission Control Project": {
+      "main": [[{"node": "BOSS Creates Mission Plan", "type": "main", "index": 0}]]
+    },
+    "BOSS Creates Mission Plan": {
+      "main": [[{"node": "Approve & Materialize Tasks", "type": "main", "index": 0}]]
+    },
+    "Approve & Materialize Tasks": {
+      "main": [[{"node": "Log Mission in Google Sheets CRM", "type": "main", "index": 0}]]
+    },
+    "Log Mission in Google Sheets CRM": {
+      "main": [[{"node": "Return Mission Started", "type": "main", "index": 0}]]
+    },
+    "Return Mission Started": {
+      "main": [[{"node": "Research Leads & Create Drafts", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

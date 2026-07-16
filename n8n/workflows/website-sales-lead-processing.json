@@ -1,0 +1,165 @@
+{
+  "name": "Mission Control – CRM Lead & Gmail Draft",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control-sales-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "sales-lead-webhook",
+      "name": "Receive Qualified Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-620, 0],
+      "webhookId": "mission-control-sales-lead"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nif (input.send === true) throw new Error('Automatischer E-Mail-Versand ist gesperrt.');\nif (!input.lead?.id || !input.lead?.name) throw new Error('Lead ist unvollständig.');\nif (!input.draft?.to || !input.draft?.subject || !input.draft?.body) throw new Error('E-Mail-Entwurf ist unvollständig.');\nreturn [{ json: { ...input, send: false, approval_status: 'pending' } }];"
+      },
+      "id": "validate-draft-only",
+      "name": "Enforce Draft Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-390, 0]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1uCKDobkcfjjOOmRUGeUVCwtAW5ddw49Smo7nWz9hysY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead-ID": "={{ $json.lead.id }}",
+            "Unternehmen": "={{ $json.lead.name }}",
+            "Branche": "={{ $json.lead.category }}",
+            "Stadt": "={{ $json.lead.city }}",
+            "Website": "={{ $json.lead.website }}",
+            "Website-Qualität": "={{ !$json.lead.website ? 'Keine Website' : ($json.lead.website_score < 40 ? 'Schlecht' : ($json.lead.website_score < 60 ? 'Veraltet' : ($json.lead.website_score < 80 ? 'Akzeptabel' : 'Gut'))) }}",
+            "Score": "={{ $json.lead.opportunity_score }}",
+            "Ansprechpartner": "",
+            "E-Mail": "={{ $json.lead.email }}",
+            "Telefon": "",
+            "Quelle": "OpenStreetMap",
+            "Status": "Kontakt vorbereitet",
+            "Zugewiesener Agent": "FLOW",
+            "Nächste Aktion": "Entwurf prüfen und freigeben",
+            "Kontaktfreigabe": "Nur Entwurf",
+            "Angebotswert EUR": 350,
+            "Opt-out": "Nein",
+            "Notizen": "={{ [$json.lead.address, ...$json.lead.reasons].filter(Boolean).join('; ') }}",
+            "Quell-URL": "={{ $json.lead.source_url }}",
+            "Erstellt am": "={{ $now }}",
+            "Aktualisiert am": "={{ $now }}"
+          },
+          "matchingColumns": ["Lead-ID"],
+          "schema": [
+            { "id": "Lead-ID", "displayName": "Lead-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Unternehmen", "displayName": "Unternehmen", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Branche", "displayName": "Branche", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Stadt", "displayName": "Stadt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Website", "displayName": "Website", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Website-Qualität", "displayName": "Website-Qualität", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Score", "displayName": "Score", "required": false, "defaultMatch": false, "display": true, "type": "number", "canBeUsedToMatch": true },
+            { "id": "Ansprechpartner", "displayName": "Ansprechpartner", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "E-Mail", "displayName": "E-Mail", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Telefon", "displayName": "Telefon", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Quelle", "displayName": "Quelle", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Status", "displayName": "Status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Zugewiesener Agent", "displayName": "Zugewiesener Agent", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Letzter Kontakt", "displayName": "Letzter Kontakt", "required": false, "defaultMatch": false, "display": true, "type": "dateTime", "canBeUsedToMatch": true },
+            { "id": "Nächste Aktion", "displayName": "Nächste Aktion", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Wiedervorlage", "displayName": "Wiedervorlage", "required": false, "defaultMatch": false, "display": true, "type": "date", "canBeUsedToMatch": true },
+            { "id": "Kontaktfreigabe", "displayName": "Kontaktfreigabe", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Angebotswert EUR", "displayName": "Angebotswert EUR", "required": false, "defaultMatch": false, "display": true, "type": "number", "canBeUsedToMatch": true },
+            { "id": "Opt-out", "displayName": "Opt-out", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Notizen", "displayName": "Notizen", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Quell-URL", "displayName": "Quell-URL", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Erstellt am", "displayName": "Erstellt am", "required": false, "defaultMatch": false, "display": true, "type": "dateTime", "canBeUsedToMatch": true },
+            { "id": "Aktualisiert am", "displayName": "Aktualisiert am", "required": false, "defaultMatch": false, "display": true, "type": "dateTime", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "append-crm-lead",
+      "name": "Append Lead to CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [-130, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "qghI4J00QviooTnf",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $('Enforce Draft Only').first().json.draft.subject }}",
+        "emailType": "text",
+        "message": "={{ $('Enforce Draft Only').first().json.draft.body }}",
+        "options": {
+          "sendTo": "={{ $('Enforce Draft Only').first().json.draft.to }}"
+        }
+      },
+      "id": "create-gmail-draft",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [130, 0],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "aUXrUPBPz7ZPYXF9",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ crm_logged: true, draft_created: true, draft_id: $json.id || null, sent: false, approval_status: 'pending' }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "return-draft-status",
+      "name": "Return Approval Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [390, 0]
+    }
+  ],
+  "connections": {
+    "Receive Qualified Lead": {
+      "main": [[{"node": "Enforce Draft Only", "type": "main", "index": 0}]]
+    },
+    "Enforce Draft Only": {
+      "main": [[{"node": "Append Lead to CRM", "type": "main", "index": 0}]]
+    },
+    "Append Lead to CRM": {
+      "main": [[{"node": "Create Gmail Draft", "type": "main", "index": 0}]]
+    },
+    "Create Gmail Draft": {
+      "main": [[{"node": "Return Approval Status", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  }
+}

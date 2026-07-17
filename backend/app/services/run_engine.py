@@ -101,6 +101,9 @@ class AutonomousRunEngine:
     ) -> list[dict[str, Any]]:
         """Keep repair edits for files that already exist inside the product root."""
         output_directory = (plan.output_directory or "").rstrip("/")
+        replacement_paths = {
+            item["path"] for item in coder_result.get("files", [])
+        }
         edits: list[dict[str, Any]] = []
         for item in coder_result.get("edits", []):
             path = item["path"]
@@ -109,6 +112,8 @@ class AutonomousRunEngine:
                     "Produkt-Edits müssen im vorgesehenen Projektordner liegen: " + path
                 )
             self._assert_product_path_is_customizable(plan, path)
+            if path in replacement_paths:
+                continue
             if resolve_workspace_path(workspace, path).exists():
                 edits.append(item)
         return edits

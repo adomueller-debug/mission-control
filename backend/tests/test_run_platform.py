@@ -1380,6 +1380,35 @@ def test_creation_mode_protects_deterministic_scaffold_files(tmp_path: Path):
         )
 
 
+def test_creation_mode_ignores_redundant_edit_after_full_file_replacement(
+    tmp_path: Path,
+):
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+    app = tmp_path / "projects/demo/src/App.tsx"
+    app.parent.mkdir(parents=True)
+    app.write_text("old", encoding="utf-8")
+    coder_result = {
+        "files": [{"path": "projects/demo/src/App.tsx", "content": "new"}],
+        "edits": [
+            {
+                "path": "projects/demo/src/App.tsx",
+                "search": "model hallucinated search",
+                "replacement": "ignored",
+            }
+        ],
+    }
+
+    assert run_engine_module.run_engine._creation_edits(
+        plan, str(tmp_path), coder_result
+    ) == []
+
+
 def test_creation_mode_applies_repair_edits_before_full_validation(
     tmp_path: Path, monkeypatch
 ):

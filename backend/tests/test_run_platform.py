@@ -1242,6 +1242,11 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr(
         run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
         "review_changes",
         lambda workspace, paths: {"approved": True, "issues": []},
     )
@@ -1328,6 +1333,11 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
     )
     monkeypatch.setattr(
         run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
         "review_changes",
         lambda workspace, paths: {"approved": True, "issues": []},
     )
@@ -1341,6 +1351,102 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
     generated = Path(completed["workspace"]) / "projects/demo/index.html"
     assert generated.read_text(encoding="utf-8") == "<h1>Demo</h1>"
     assert completed["result"]["files"] == ["projects/demo/index.html"]
+
+
+def test_creation_mode_applies_repair_edits_before_full_validation(
+    tmp_path: Path, monkeypatch
+):
+    run = run_service.create(
+        task="Create and repair a website prototype",
+        workspace=str(tmp_path),
+        max_repair_attempts=2,
+        start=False,
+    )
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+    monkeypatch.setattr(
+        run_engine_module, "create_execution_plan", lambda task, workspace: plan
+    )
+    calls = {"generate": 0, "repository": 0}
+
+    def generate(plan, workspace, feedback, blueprint=None):
+        calls["generate"] += 1
+        if calls["generate"] == 1:
+            return {
+                "status": "completed",
+                "summary": "initial",
+                "files": [
+                    {
+                        "path": "projects/demo/src/styles.css",
+                        "content": "body { color: black; }",
+                    }
+                ],
+            }
+        assert "product-reduced-motion" in feedback
+        assert "pytest" not in feedback
+        return {
+            "status": "completed",
+            "summary": "repaired",
+            "edits": [
+                {
+                    "path": "projects/demo/src/styles.css",
+                    "search": "body { color: black; }",
+                    "replacement": (
+                        "body { color: black; }\n"
+                        "@media (prefers-reduced-motion: reduce) { * { animation: none; } }"
+                    ),
+                }
+            ],
+        }
+
+    def product_quality(plan, workspace):
+        css = Path(workspace, "projects/demo/src/styles.css").read_text(
+            encoding="utf-8"
+        )
+        success = "prefers-reduced-motion" in css
+        return {
+            "success": success,
+            "checks": [
+                {
+                    "name": "product-reduced-motion",
+                    "success": success,
+                    "output": "Reduced motion fehlt" if not success else "OK",
+                    "failure_class": None if success else "code",
+                }
+            ],
+        }
+
+    def repository_validation(workspace):
+        calls["repository"] += 1
+        return {"success": True, "checks": []}
+
+    monkeypatch.setattr(run_engine_module, "execute_plan", generate)
+    monkeypatch.setattr(run_engine_module, "validate_product_quality", product_quality)
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(run_engine_module, "validate_project", repository_validation)
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None and completed["status"] == "completed"
+    assert completed["repair_attempts"] == 1
+    assert calls == {"generate": 2, "repository": 1}
+    repaired = Path(completed["workspace"], "projects/demo/src/styles.css")
+    assert "prefers-reduced-motion" in repaired.read_text(encoding="utf-8")
 
 
 def test_validator_resolves_homebrew_npm_for_autostart_processes(

@@ -14,6 +14,7 @@ from backend.app.services.coder import execute_plan
 from backend.app.services.engineering_quality import (
     create_release_candidate,
     create_technical_blueprint,
+    validate_product_build,
     validate_product_quality,
 )
 from backend.app.services.github_publisher import github_publisher
@@ -52,7 +53,7 @@ class AutonomousRunEngine:
                     "content": edit.get("replacement", ""),
                 }
         files = list(files_by_path.values())
-        if not files:
+        if not files and not coder_result.get("edits"):
             raise ValueError("Produktmodus benötigt mindestens eine neue Datei.")
         invalid = [
             item["path"]
@@ -66,6 +67,60 @@ class AutonomousRunEngine:
                 + ", ".join(invalid)
             )
         return files
+
+    def _creation_edits(
+        self,
+        plan: Any,
+        workspace: str,
+        coder_result: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Keep repair edits for files that already exist inside the product root."""
+        output_directory = (plan.output_directory or "").rstrip("/")
+        edits: list[dict[str, Any]] = []
+        for item in coder_result.get("edits", []):
+            path = item["path"]
+            if not output_directory or not path.startswith(f"{output_directory}/"):
+                raise ValueError(
+                    "Produkt-Edits müssen im vorgesehenen Projektordner liegen: " + path
+                )
+            if resolve_workspace_path(workspace, path).exists():
+                edits.append(item)
+        return edits
+
+    @staticmethod
+    def _failure_signature(failure: dict[str, Any]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                str(check.get("name", "unknown"))
+                for check in failure.get("checks", [])
+                if not check.get("success")
+            )
+        )
+
+    @staticmethod
+    def _repair_feedback(
+        failure: dict[str, Any],
+        *,
+        repeated: bool = False,
+    ) -> str:
+        failed = [
+            check for check in failure.get("checks", []) if not check.get("success")
+        ]
+        lines = ["Behebe ausschließlich diese fehlgeschlagenen Gates:"]
+        for check in failed:
+            output = " ".join(str(check.get("output", "")).split())[-1_200:]
+            lines.append(f"- {check.get('name', 'unknown')}: {output}")
+        if repeated:
+            lines.extend(
+                [
+                    "STRATEGIEWECHSEL: Derselbe Gate-Satz ist erneut fehlgeschlagen.",
+                    "Ersetze die betroffenen vorhandenen Dateien vollständig über `files`, statt neue Hilfskomponenten anzulegen.",
+                    "Für product-react-vite-typescript: package.json mit react, react-dom, vite, typescript und build-Script korrigieren.",
+                    "Für product-responsive-layout oder product-reduced-motion: das zentrale Stylesheet mit @media-Breakpoint und prefers-reduced-motion vollständig korrigieren.",
+                    "Für product-required-files: package.json, index.html, src/main.tsx und src/App.tsx vollständig liefern.",
+                ]
+            )
+        return "\n".join(lines)[-6_000:]
 
     def _activate_agent(self, run_id: str, status: str, agent: str) -> None:
         current = run_service.get(run_id)
@@ -301,6 +356,7 @@ class AutonomousRunEngine:
             feedback = ""
             validation: dict[str, Any] = {"success": False, "checks": []}
             summary = ""
+            previous_failure_signature: tuple[str, ...] = ()
             while True:
                 run = self._guard(run_id, started_at)
                 self._activate_agent(run_id, "executing", "coder")
@@ -320,6 +376,9 @@ class AutonomousRunEngine:
                 summary = coder_result.get("summary", "")
                 try:
                     if plan.creation_mode:
+                        repair_edits = self._creation_edits(
+                            plan, run["workspace"], coder_result
+                        )
                         changed_paths.update(
                             self._apply_files(
                                 run_id,
@@ -330,6 +389,15 @@ class AutonomousRunEngine:
                                 originals,
                             )
                         )
+                        if repair_edits:
+                            changed_paths.update(
+                                self._apply_edits(
+                                    run_id,
+                                    run["workspace"],
+                                    repair_edits,
+                                    originals,
+                                )
+                            )
                     elif coder_result.get("edits"):
                         changed_paths.update(
                             self._apply_edits(
@@ -360,11 +428,17 @@ class AutonomousRunEngine:
                         ],
                     }
                     run_service.add_event(run_id, "patch.rejected", failure)
-                    repair_feedback = self._schedule_repair(
-                        run_id,
-                        failure,
-                    )
-                    feedback = f"{feedback}\n\n{repair_feedback}"[-30_000:]
+                    self._schedule_repair(run_id, failure)
+                    signature = self._failure_signature(failure)
+                    repeated = signature == previous_failure_signature
+                    previous_failure_signature = signature
+                    feedback = self._repair_feedback(failure, repeated=repeated)
+                    if repeated:
+                        run_service.add_event(
+                            run_id,
+                            "repair.strategy_changed",
+                            {"strategy": "replace_target_files", "gates": list(signature)},
+                        )
                     continue
                 run_service.save_checkpoint(
                     run_id,
@@ -377,13 +451,38 @@ class AutonomousRunEngine:
 
                 self._guard(run_id, started_at)
                 self._activate_agent(run_id, "validating", "validator")
-                validation = validate_project(run["workspace"])
+                run_service.add_event(
+                    run_id,
+                    "validation.phase",
+                    {"phase": "product_static", "label": "Produktstruktur prüfen"},
+                )
                 product_validation = validate_product_quality(plan, run["workspace"])
+                product_build: dict[str, Any] = {"success": True, "checks": []}
+                repository_validation: dict[str, Any] = {"success": True, "checks": []}
+                if product_validation["success"]:
+                    run_service.add_event(
+                        run_id,
+                        "validation.phase",
+                        {"phase": "product_build", "label": "Produkt-Build ausführen"},
+                    )
+                    product_build = validate_product_build(plan, run["workspace"])
+                if product_validation["success"] and product_build["success"]:
+                    run_service.add_event(
+                        run_id,
+                        "validation.phase",
+                        {"phase": "repository", "label": "Vollständige Merge-Gates prüfen"},
+                    )
+                    repository_validation = validate_project(run["workspace"])
                 validation = {
-                    "success": validation["success"] and product_validation["success"],
+                    "success": (
+                        product_validation["success"]
+                        and product_build["success"]
+                        and repository_validation["success"]
+                    ),
                     "checks": [
-                        *validation["checks"],
                         *product_validation["checks"],
+                        *product_build["checks"],
+                        *repository_validation["checks"],
                     ],
                 }
                 self._tool_event(run_id, "validate_project", validation)
@@ -432,8 +531,17 @@ class AutonomousRunEngine:
                         ],
                     }
 
-                repair_feedback = self._schedule_repair(run_id, validation)
-                feedback = f"{feedback}\n\n{repair_feedback}"[-30_000:]
+                self._schedule_repair(run_id, validation)
+                signature = self._failure_signature(validation)
+                repeated = signature == previous_failure_signature
+                previous_failure_signature = signature
+                feedback = self._repair_feedback(validation, repeated=repeated)
+                if repeated:
+                    run_service.add_event(
+                        run_id,
+                        "repair.strategy_changed",
+                        {"strategy": "replace_target_files", "gates": list(signature)},
+                    )
 
             run = self._guard(run_id, started_at)
             self._activate_agent(run_id, "publishing", "github")

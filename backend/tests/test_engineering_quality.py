@@ -2,9 +2,11 @@ from pathlib import Path
 
 from backend.app.models.execution_plan import ExecutionPlan, PlanStep
 from backend.app.services import coder as coder_module
+from backend.app.services import engineering_quality as quality_module
 from backend.app.services.engineering_quality import (
     create_release_candidate,
     create_technical_blueprint,
+    validate_product_build,
     validate_product_quality,
 )
 
@@ -97,6 +99,29 @@ section { animation: reveal .6s ease both; }
 
     assert validation["success"] is True
     assert all(check["success"] for check in validation["checks"])
+
+
+def test_product_build_runs_inside_generated_product(tmp_path: Path, monkeypatch):
+    product = tmp_path / "projects" / "acme"
+    product.mkdir(parents=True)
+    (product / "package.json").write_text(
+        '{"scripts":{"build":"vite build"}}', encoding="utf-8"
+    )
+    shared_modules = tmp_path / "frontend" / "node_modules"
+    shared_modules.mkdir(parents=True)
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_run(command, *, cwd=None, timeout=300):
+        calls.append((command, Path(cwd)))
+        return True, "build ok"
+
+    monkeypatch.setattr(quality_module, "run_command", fake_run)
+
+    validation = validate_product_build(website_plan(), str(tmp_path))
+
+    assert validation["success"] is True
+    assert calls == [([quality_module.resolve_executable("npm"), "run", "build"], product)]
+    assert not (product / "node_modules").exists()
 
 
 def test_release_candidate_is_created_without_publishing():

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.core.workspace_security import resolve_workspace_path
 from backend.app.models.execution_plan import ExecutionPlan
+from backend.app.services.validator import resolve_executable, run_command
 
 
 class BlueprintFile(BaseModel):
@@ -167,6 +170,14 @@ def validate_product_quality(
     markup = "\n".join(text for name, text in sources.items() if name.endswith((".html", ".jsx", ".tsx")))
     checks = [
         _quality_check(
+            "product-required-files",
+            all(
+                required in sources
+                for required in ("package.json", "index.html", "src/main.tsx", "src/App.tsx")
+            ),
+            "package.json, index.html, src/main.tsx und src/App.tsx sind erforderlich.",
+        ),
+        _quality_check(
             "product-react-vite-typescript",
             "react" in dependencies and "vite" in dependencies
             and any(name.endswith(".tsx") for name in sources) and "build" in scripts,
@@ -216,6 +227,105 @@ def validate_product_quality(
         ),
     ]
     return {"success": all(check["success"] for check in checks), "checks": checks}
+
+
+def validate_product_build(
+    plan: ExecutionPlan,
+    workspace: str,
+) -> dict[str, Any]:
+    """Build the generated product with local dependencies whenever possible."""
+    if not plan.creation_mode or not plan.output_directory:
+        return {"success": True, "checks": []}
+
+    root = Path(workspace).resolve()
+    product = resolve_workspace_path(workspace, plan.output_directory, must_exist=True)
+    package_file = product / "package.json"
+    if not package_file.is_file():
+        return {
+            "success": False,
+            "checks": [
+                _quality_check(
+                    "product-build",
+                    False,
+                    "Produkt-Build nicht möglich: package.json fehlt.",
+                )
+            ],
+        }
+
+    npm = resolve_executable("npm")
+    node_modules = product / "node_modules"
+    package_lock = product / "package-lock.json"
+    had_modules = node_modules.exists()
+    had_lock = package_lock.exists()
+    linked_modules = False
+    checks: list[dict[str, Any]] = []
+    try:
+        shared_modules = root / "frontend" / "node_modules"
+        if not had_modules and shared_modules.is_dir():
+            node_modules.symlink_to(shared_modules, target_is_directory=True)
+            linked_modules = True
+            checks.append(
+                _quality_check(
+                    "product-dependencies",
+                    True,
+                    "Lokale Mission-Control-Dependencies für den isolierten Build verwendet.",
+                )
+            )
+        elif not had_modules:
+            try:
+                installed, install_output = run_command(
+                    [
+                        npm,
+                        "install",
+                        "--ignore-scripts",
+                        "--no-audit",
+                        "--no-fund",
+                        "--prefer-offline",
+                    ],
+                    cwd=product,
+                    timeout=300,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                installed, install_output = False, str(exc)
+            checks.append(
+                {
+                    "name": "product-dependencies",
+                    "success": installed,
+                    "output": install_output[-5_000:],
+                    "failure_class": "infrastructure" if not installed else None,
+                }
+            )
+            if not installed:
+                return {"success": False, "checks": checks}
+
+        failure_class: str | None
+        try:
+            built, build_output = run_command(
+                [npm, "run", "build"],
+                cwd=product,
+                timeout=180,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            built, build_output = False, str(exc)
+            failure_class = "infrastructure"
+        else:
+            failure_class = "code" if not built else None
+        checks.append(
+            {
+                "name": "product-build",
+                "success": built,
+                "output": build_output[-8_000:] or "Produktions-Build erfolgreich.",
+                "failure_class": failure_class,
+            }
+        )
+        return {"success": all(check["success"] for check in checks), "checks": checks}
+    finally:
+        if linked_modules and node_modules.is_symlink():
+            node_modules.unlink()
+        elif not had_modules and node_modules.exists():
+            shutil.rmtree(node_modules)
+        if not had_lock and package_lock.exists():
+            package_lock.unlink()
 
 
 def create_release_candidate(

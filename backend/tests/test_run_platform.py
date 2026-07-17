@@ -1449,6 +1449,109 @@ def test_creation_mode_applies_repair_edits_before_full_validation(
     assert "prefers-reduced-motion" in repaired.read_text(encoding="utf-8")
 
 
+def test_patch_failure_keeps_last_gate_feedback_for_full_replacement(
+    tmp_path: Path, monkeypatch
+):
+    run = run_service.create(
+        task="Repair a generated website safely",
+        workspace=str(tmp_path),
+        max_repair_attempts=3,
+        start=False,
+    )
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+    monkeypatch.setattr(
+        run_engine_module, "create_execution_plan", lambda task, workspace: plan
+    )
+    calls = {"generate": 0}
+
+    def generate(plan, workspace, feedback, blueprint=None):
+        calls["generate"] += 1
+        path = "projects/demo/src/styles.css"
+        if calls["generate"] == 1:
+            return {
+                "status": "completed",
+                "summary": "initial",
+                "files": [{"path": path, "content": "body { color: black; }"}],
+            }
+        if calls["generate"] == 2:
+            assert "product-reduced-motion" in feedback
+            return {
+                "status": "completed",
+                "summary": "ambiguous repair",
+                "edits": [
+                    {"path": path, "search": "missing", "replacement": "fixed"}
+                ],
+            }
+        assert "patch-application" in feedback
+        assert "product-reduced-motion" in feedback
+        assert "STRATEGIEWECHSEL" in feedback
+        return {
+            "status": "completed",
+            "summary": "full replacement",
+            "files": [
+                {
+                    "path": path,
+                    "content": (
+                        "body { color: black; }\n"
+                        "@media (prefers-reduced-motion: reduce) { * { animation: none; } }"
+                    ),
+                }
+            ],
+        }
+
+    def product_quality(plan, workspace):
+        css = Path(workspace, "projects/demo/src/styles.css").read_text(
+            encoding="utf-8"
+        )
+        success = "prefers-reduced-motion" in css
+        return {
+            "success": success,
+            "checks": [
+                {
+                    "name": "product-reduced-motion",
+                    "success": success,
+                    "output": "Reduced motion fehlt" if not success else "OK",
+                    "failure_class": None if success else "code",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(run_engine_module, "execute_plan", generate)
+    monkeypatch.setattr(run_engine_module, "validate_product_quality", product_quality)
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None and completed["status"] == "completed"
+    assert completed["repair_attempts"] == 2
+    assert calls["generate"] == 3
+    assert any(
+        event["type"] == "repair.strategy_changed"
+        for event in run_service.events(run["id"])
+    )
+
+
 def test_validator_resolves_homebrew_npm_for_autostart_processes(
     tmp_path: Path, monkeypatch
 ):

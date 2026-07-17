@@ -356,7 +356,8 @@ class AutonomousRunEngine:
             feedback = ""
             validation: dict[str, Any] = {"success": False, "checks": []}
             summary = ""
-            previous_failure_signature: tuple[str, ...] = ()
+            failure_counts: dict[tuple[str, ...], int] = {}
+            last_validation_failure: dict[str, Any] = {"success": False, "checks": []}
             while True:
                 run = self._guard(run_id, started_at)
                 self._activate_agent(run_id, "executing", "coder")
@@ -430,12 +431,28 @@ class AutonomousRunEngine:
                     run_service.add_event(run_id, "patch.rejected", failure)
                     self._schedule_repair(run_id, failure)
                     signature = self._failure_signature(failure)
+                    failure_counts[signature] = failure_counts.get(signature, 0) + 1
                     repeated = (
-                        signature == previous_failure_signature
+                        failure_counts[signature] > 1
                         or signature == ("patch-application",)
                     )
-                    previous_failure_signature = signature
-                    feedback = self._repair_feedback(failure, repeated=repeated)
+                    feedback_failure = failure
+                    if signature == ("patch-application",) and last_validation_failure["checks"]:
+                        patch_checks = failure.get("checks", [])
+                        if not isinstance(patch_checks, list):
+                            patch_checks = []
+                        feedback_failure = {
+                            "success": False,
+                            "checks": patch_checks
+                            + [
+                                    check
+                                    for check in last_validation_failure["checks"]
+                                    if not check.get("success")
+                            ],
+                        }
+                    feedback = self._repair_feedback(
+                        feedback_failure, repeated=repeated
+                    )
                     if repeated:
                         run_service.add_event(
                             run_id,
@@ -536,8 +553,9 @@ class AutonomousRunEngine:
 
                 self._schedule_repair(run_id, validation)
                 signature = self._failure_signature(validation)
-                repeated = signature == previous_failure_signature
-                previous_failure_signature = signature
+                failure_counts[signature] = failure_counts.get(signature, 0) + 1
+                repeated = failure_counts[signature] > 1
+                last_validation_failure = validation
                 feedback = self._repair_feedback(validation, repeated=repeated)
                 if repeated:
                     run_service.add_event(

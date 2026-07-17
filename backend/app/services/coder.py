@@ -79,7 +79,21 @@ def execute_plan(
     feedback: str = "",
     blueprint: BlueprintArtifact | dict | None = None,
 ) -> dict:
-    workspace_context = load_workspace_context(plan.expected_files, workspace)
+    context_files = list(plan.expected_files)
+    if plan.creation_mode:
+        blueprint_files = (
+            [item.path for item in blueprint.file_plan]
+            if isinstance(blueprint, BlueprintArtifact)
+            else [
+                str(item.get("path", ""))
+                for item in (blueprint or {}).get("file_plan", [])
+                if isinstance(item, dict)
+            ]
+        )
+        context_files.extend(path for path in blueprint_files if path)
+    workspace_context = load_workspace_context(
+        list(dict.fromkeys(context_files)), workspace
+    )
     full_replacement_mode = "STRATEGIEWECHSEL" in feedback
     scope_instruction = (
         f"Erstelle ein eigenständiges neues Produkt ausschließlich unter "

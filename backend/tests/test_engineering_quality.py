@@ -209,3 +209,50 @@ def test_builder_strategy_switch_requires_full_file_replacement(
     assert result["status"] == "completed"
     assert "`edits` muss leer bleiben" in captured["prompt"]
     assert "insbesondere auch package.json" in captured["prompt"]
+
+
+def test_builder_receives_current_blueprint_files_during_product_repair(
+    tmp_path: Path, monkeypatch
+):
+    plan = website_plan()
+    product = tmp_path / "projects" / "acme"
+    source = product / "src"
+    source.mkdir(parents=True)
+    (product / "package.json").write_text(
+        '{"scripts":{"build":"vite build"}}', encoding="utf-8"
+    )
+    (source / "App.tsx").write_text(
+        "export default function App() { return <main>Current app</main> }",
+        encoding="utf-8",
+    )
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "response": (
+                    '{"summary":"done","edits":[],"files":['
+                    '{"path":"projects/acme/src/App.tsx","content":"fixed"}]}'
+                )
+            }
+
+    def post(url, *, json, timeout):
+        captured.update(json)
+        return Response()
+
+    monkeypatch.setattr(coder_module.requests, "post", post)
+    blueprint = create_technical_blueprint(plan, str(tmp_path))
+
+    coder_module.execute_plan(
+        plan,
+        str(tmp_path),
+        feedback="product-semantic-accessibility ist rot",
+        blueprint=blueprint,
+    )
+
+    assert "### FILE: projects/acme/package.json" in captured["prompt"]
+    assert "### FILE: projects/acme/src/App.tsx" in captured["prompt"]
+    assert "Current app" in captured["prompt"]

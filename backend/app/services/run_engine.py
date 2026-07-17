@@ -118,6 +118,9 @@ class AutonomousRunEngine:
                     "Für product-react-vite-typescript: package.json mit react, react-dom, vite, typescript und build-Script korrigieren.",
                     "Für product-responsive-layout oder product-reduced-motion: das zentrale Stylesheet mit @media-Breakpoint und prefers-reduced-motion vollständig korrigieren.",
                     "Für product-required-files: package.json, index.html, src/main.tsx und src/App.tsx vollständig liefern.",
+                    "Für product-visual-system: styles.css benötigt mindestens 800 Zeichen, :root-Variablen und display:grid oder display:flex.",
+                    "Für product-conversion-cta: App.tsx benötigt einen sichtbaren <a>- oder <button>-CTA mit Text wie 'Angebot anfragen' oder 'Kontakt'.",
+                    "Für product-semantic-accessibility: App.tsx muss <nav>, <main> und genau eine sichtbare <h1> enthalten.",
                 ]
             )
         return "\n".join(lines)[-6_000:]

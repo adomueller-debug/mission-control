@@ -98,8 +98,12 @@ class AutonomousRunEngine:
         plan: Any,
         workspace: str,
         coder_result: dict[str, Any],
+        *,
+        full_replacement: bool = False,
     ) -> list[dict[str, Any]]:
         """Keep repair edits for files that already exist inside the product root."""
+        if full_replacement:
+            return []
         output_directory = (plan.output_directory or "").rstrip("/")
         replacement_paths = {
             item["path"] for item in coder_result.get("files", [])
@@ -445,7 +449,10 @@ class AutonomousRunEngine:
                 try:
                     if plan.creation_mode:
                         repair_edits = self._creation_edits(
-                            plan, run["workspace"], coder_result
+                            plan,
+                            run["workspace"],
+                            coder_result,
+                            full_replacement="STRATEGIEWECHSEL" in feedback,
                         )
                         changed_paths.update(
                             self._apply_files(

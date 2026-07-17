@@ -1408,6 +1408,23 @@ def test_creation_mode_ignores_redundant_edit_after_full_file_replacement(
         plan, str(tmp_path), coder_result
     ) == []
 
+    unrelated_edit = {
+        "files": [{"path": "projects/demo/src/App.tsx", "content": "new"}],
+        "edits": [
+            {
+                "path": "projects/demo/src/styles.css",
+                "search": "model hallucinated search",
+                "replacement": "ignored in full replacement mode",
+            }
+        ],
+    }
+    assert run_engine_module.run_engine._creation_edits(
+        plan,
+        str(tmp_path),
+        unrelated_edit,
+        full_replacement=True,
+    ) == []
+
 
 def test_creation_mode_applies_repair_edits_before_full_validation(
     tmp_path: Path, monkeypatch

@@ -236,7 +236,7 @@ def test_builder_strategy_switch_requires_full_file_replacement(
 
     assert result["status"] == "completed"
     assert "`edits` muss leer bleiben" in captured["prompt"]
-    assert "insbesondere auch package.json" in captured["prompt"]
+    assert "Gib niemals package.json" in captured["prompt"]
 
 
 def test_builder_receives_current_blueprint_files_during_product_repair(

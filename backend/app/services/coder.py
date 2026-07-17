@@ -149,7 +149,9 @@ Produktmodus darf `files` bei einer ausdrücklich verlangten Vollersatz-Reparatu
 bestehende Datei vollständig ersetzen.
 {
     "REPARATURMODUS VOLLERSATZ: `edits` muss leer bleiben. Liefere jede betroffene Datei "
-    "mit vollständigem Inhalt in `files`; insbesondere auch package.json und Stylesheets."
+    "mit vollständigem Inhalt in `files`, aber ausschließlich src/App.tsx, src/styles.css "
+    "oder selbst angelegte Komponenten und Assets. Gib niemals package.json, index.html, "
+    "TypeScript-/Vite-Konfiguration, src/main.tsx oder src/vite-env.d.ts aus."
     if full_replacement_mode
     else ""
 }

@@ -1379,6 +1379,18 @@ def test_creation_mode_protects_deterministic_scaffold_files(tmp_path: Path):
             },
         )
 
+    with pytest.raises(ValueError, match="deterministischen Startergerüst"):
+        run_engine_module.run_engine._creation_files(
+            plan,
+            str(tmp_path),
+            {
+                "files": [
+                    {"path": "projects/demo/src/App.tsx", "content": "bad"}
+                ],
+                "edits": [],
+            },
+        )
+
 
 def test_creation_mode_ignores_redundant_edit_after_full_file_replacement(
     tmp_path: Path,
@@ -1390,14 +1402,14 @@ def test_creation_mode_ignores_redundant_edit_after_full_file_replacement(
         output_directory="projects/demo",
         steps=[],
     )
-    app = tmp_path / "projects/demo/src/App.tsx"
+    app = tmp_path / "projects/demo/src/content.ts"
     app.parent.mkdir(parents=True)
     app.write_text("old", encoding="utf-8")
     coder_result = {
-        "files": [{"path": "projects/demo/src/App.tsx", "content": "new"}],
+        "files": [{"path": "projects/demo/src/content.ts", "content": "new"}],
         "edits": [
             {
-                "path": "projects/demo/src/App.tsx",
+                "path": "projects/demo/src/content.ts",
                 "search": "model hallucinated search",
                 "replacement": "ignored",
             }
@@ -1409,10 +1421,10 @@ def test_creation_mode_ignores_redundant_edit_after_full_file_replacement(
     ) == []
 
     unrelated_edit = {
-        "files": [{"path": "projects/demo/src/App.tsx", "content": "new"}],
+        "files": [{"path": "projects/demo/src/content.ts", "content": "new"}],
         "edits": [
             {
-                "path": "projects/demo/src/styles.css",
+                "path": "projects/demo/src/theme.css",
                 "search": "model hallucinated search",
                 "replacement": "ignored in full replacement mode",
             }
@@ -1455,7 +1467,7 @@ def test_creation_mode_applies_repair_edits_before_full_validation(
                 "summary": "initial",
                 "files": [
                     {
-                        "path": "projects/demo/src/styles.css",
+                        "path": "projects/demo/src/theme.css",
                         "content": "body { color: black; }",
                     }
                 ],
@@ -1467,7 +1479,7 @@ def test_creation_mode_applies_repair_edits_before_full_validation(
             "summary": "repaired",
             "edits": [
                 {
-                    "path": "projects/demo/src/styles.css",
+                    "path": "projects/demo/src/theme.css",
                     "search": "body { color: black; }",
                     "replacement": (
                         "body { color: black; }\n"
@@ -1478,7 +1490,7 @@ def test_creation_mode_applies_repair_edits_before_full_validation(
         }
 
     def product_quality(plan, workspace):
-        css = Path(workspace, "projects/demo/src/styles.css").read_text(
+        css = Path(workspace, "projects/demo/src/theme.css").read_text(
             encoding="utf-8"
         )
         success = "prefers-reduced-motion" in css
@@ -1518,7 +1530,7 @@ def test_creation_mode_applies_repair_edits_before_full_validation(
     assert completed is not None and completed["status"] == "completed"
     assert completed["repair_attempts"] == 1
     assert calls == {"generate": 2, "repository": 1}
-    repaired = Path(completed["workspace"], "projects/demo/src/styles.css")
+    repaired = Path(completed["workspace"], "projects/demo/src/theme.css")
     assert "prefers-reduced-motion" in repaired.read_text(encoding="utf-8")
 
 
@@ -1545,7 +1557,7 @@ def test_patch_failure_keeps_last_gate_feedback_for_full_replacement(
 
     def generate(plan, workspace, feedback, blueprint=None):
         calls["generate"] += 1
-        path = "projects/demo/src/styles.css"
+        path = "projects/demo/src/theme.css"
         if calls["generate"] == 1:
             return {
                 "status": "completed",
@@ -1579,7 +1591,7 @@ def test_patch_failure_keeps_last_gate_feedback_for_full_replacement(
         }
 
     def product_quality(plan, workspace):
-        css = Path(workspace, "projects/demo/src/styles.css").read_text(
+        css = Path(workspace, "projects/demo/src/theme.css").read_text(
             encoding="utf-8"
         )
         success = "prefers-reduced-motion" in css

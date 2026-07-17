@@ -44,6 +44,8 @@ class AutonomousRunEngine:
         "vite.config.ts",
         "src/main.tsx",
         "src/vite-env.d.ts",
+        "src/App.tsx",
+        "src/styles.css",
     }
 
     def _assert_product_path_is_customizable(self, plan: Any, path: str) -> None:
@@ -53,8 +55,8 @@ class AutonomousRunEngine:
         if relative in self._SCAFFOLD_OWNED_PATHS:
             raise ValueError(
                 f"{path} gehört zum deterministischen Startergerüst und darf von "
-                "BUILDER nicht verändert werden. Individualisiere src/App.tsx, "
-                "src/styles.css, Komponenten oder Assets."
+                "BUILDER nicht verändert werden. Individualisiere src/content.ts, "
+                "src/theme.css, Komponenten oder Assets."
             )
 
     def _creation_files(
@@ -149,12 +151,9 @@ class AutonomousRunEngine:
             lines.extend(
                 [
                     "STRATEGIEWECHSEL: Derselbe Gate-Satz ist erneut fehlgeschlagen.",
-                    "Ersetze ausschließlich betroffene individualisierbare Dateien wie src/App.tsx oder src/styles.css vollständig über `files`, statt neue Hilfskomponenten anzulegen.",
-                    "Für product-responsive-layout oder product-reduced-motion: das zentrale Stylesheet mit @media-Breakpoint und prefers-reduced-motion vollständig korrigieren.",
-                    "Für product-visual-system: styles.css benötigt mindestens 800 Zeichen, :root-Variablen und display:grid oder display:flex.",
-                    "Für product-conversion-cta: App.tsx benötigt einen sichtbaren <a>- oder <button>-CTA mit Text wie 'Angebot anfragen' oder 'Kontakt'.",
-                    "Für product-semantic-accessibility: App.tsx muss <nav>, <main> und genau eine sichtbare <h1> enthalten.",
-                    "package.json, index.html, TypeScript-/Vite-Konfiguration und src/main.tsx gehören Mission Control und dürfen nie ausgegeben werden.",
+                    "Ersetze ausschließlich betroffene individualisierbare Dateien wie src/content.ts oder src/theme.css vollständig über `files`, statt das Fundament nachzubauen.",
+                    "Erhalte das von Mission Control bereitgestellte Inhalts-Schema in src/content.ts vollständig und ändere nur dessen Werte.",
+                    "package.json, index.html, TypeScript-/Vite-Konfiguration, src/main.tsx, src/App.tsx und src/styles.css gehören Mission Control und dürfen nie ausgegeben werden.",
                 ]
             )
         return "\n".join(lines)[-6_000:]

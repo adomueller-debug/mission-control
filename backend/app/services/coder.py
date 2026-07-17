@@ -99,9 +99,9 @@ def execute_plan(
         f"Individualisiere das bereits buildfähige Starterprodukt ausschließlich unter "
         f"`{plan.output_directory}/`; ändere keine Mission-Control-Dateien. "
         "Package-Konfiguration, Vite, TypeScript, index.html, src/main.tsx, semantisches "
-        "Grundlayout, Responsive-Basis und Reduced-Motion-Basis wurden deterministisch "
+        "Grundlayout, src/App.tsx, src/styles.css, Responsive-Basis und Reduced-Motion-Basis wurden deterministisch "
         "erzeugt und dürfen nicht neu erfunden oder entfernt werden. Bearbeite vorrangig "
-        "src/App.tsx und src/styles.css; ergänze bei Bedarf Komponenten und lokale Assets. "
+        "src/content.ts und src/theme.css; ergänze bei Bedarf Komponenten und lokale Assets. "
         "Individualisiere Design, überprüfbare Inhalte, Komponenten, Conversion Journey "
         "und hochwertige Animationen passend zum Auftrag. Verwende präzise `edits` an "
         "den vorhandenen Dateien. `files` ist nur für neue Komponenten/Assets oder eine "
@@ -149,9 +149,10 @@ Produktmodus darf `files` bei einer ausdrücklich verlangten Vollersatz-Reparatu
 bestehende Datei vollständig ersetzen.
 {
     "REPARATURMODUS VOLLERSATZ: `edits` muss leer bleiben. Liefere jede betroffene Datei "
-    "mit vollständigem Inhalt in `files`, aber ausschließlich src/App.tsx, src/styles.css "
+    "mit vollständigem Inhalt in `files`, aber ausschließlich src/content.ts, src/theme.css "
     "oder selbst angelegte Komponenten und Assets. Gib niemals package.json, index.html, "
-    "TypeScript-/Vite-Konfiguration, src/main.tsx oder src/vite-env.d.ts aus."
+    "TypeScript-/Vite-Konfiguration, src/main.tsx, src/vite-env.d.ts, src/App.tsx "
+    "oder src/styles.css aus."
     if full_replacement_mode
     else ""
 }

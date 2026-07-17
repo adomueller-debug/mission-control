@@ -84,37 +84,52 @@ def create_react_vite_scaffold(
             "vite": "^8.1.1",
         },
     }
-    app = f'''import {{ useEffect }} from "react";
+    content = f'''export const siteContent = {{
+  productName: {js_name},
+  eyebrow: "Digitaler Auftritt · Konzeptvorschau",
+  headlineLead: "Persönlich im Kern.",
+  headlineAccent: "Unverwechselbar im Web.",
+  heroText: "Ein moderner digitaler Auftritt, entwickelt für einen starken ersten Eindruck und einen einfachen Weg zur Anfrage.",
+  primaryCta: "Angebot anfragen",
+  statementTitle: "Weniger Ablenkung. Mehr Wirkung.",
+  statementText: "Klare Inhalte, großzügige Flächen und gezielte Bewegung führen Besucher intuitiv durch das Angebot. Konkrete Unternehmensangaben werden vor Veröffentlichung gemeinsam abgestimmt.",
+  servicesTitle: "Gebaut für Aufmerksamkeit und Vertrauen.",
+  services: [
+    {{ number: "01", title: "Klarer Auftritt", text: "Eine fokussierte Nutzerführung bringt Angebot, Qualität und nächsten Schritt auf den Punkt." }},
+    {{ number: "02", title: "Starke Präsenz", text: "Ein eigenständiges visuelles System schafft Wiedererkennung auf jedem Bildschirm." }},
+    {{ number: "03", title: "Direkter Kontakt", text: "Gut platzierte Kontaktpunkte machen aus Interesse eine konkrete Anfrage." }},
+  ],
+  contactTitle: "Aus einem guten ersten Eindruck wird ein Gespräch.",
+  contactText: "Diese Konzeptvorschau zeigt die gestalterische Richtung. Inhalte, Leistungen und Kontaktdaten werden vor dem Livegang verifiziert.",
+  contactCta: "Gespräch vorbereiten",
+}} as const;
+'''
+    app = '''import { useEffect } from "react";
 import "./styles.css";
+import "./theme.css";
+import { siteContent } from "./content";
 
-const productName = {js_name};
-
-const services = [
-  {{ number: "01", title: "Klarer Auftritt", text: "Eine fokussierte Nutzerführung bringt Angebot, Qualität und nächsten Schritt auf den Punkt." }},
-  {{ number: "02", title: "Starke Präsenz", text: "Ein eigenständiges visuelles System schafft Wiedererkennung auf jedem Bildschirm." }},
-  {{ number: "03", title: "Direkter Kontakt", text: "Gut platzierte Kontaktpunkte machen aus Interesse eine konkrete Anfrage." }},
-];
-
-export default function App() {{
-  useEffect(() => {{
+export default function App() {
+  const { productName, services } = siteContent;
+  useEffect(() => {
     const elements = document.querySelectorAll<HTMLElement>("[data-reveal]");
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {{
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       elements.forEach((element) => element.classList.add("is-visible"));
       return;
-    }}
+    }
     const observer = new IntersectionObserver(
       (entries) => entries.forEach((entry) => entry.isIntersecting && entry.target.classList.add("is-visible")),
-      {{ threshold: 0.16, rootMargin: "0px 0px -8%" }},
+      { threshold: 0.16, rootMargin: "0px 0px -8%" },
     );
     elements.forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }}, []);
+  }, []);
 
   return (
     <div className="site-shell">
       <a className="skip-link" href="#inhalt">Zum Inhalt springen</a>
       <header className="site-header">
-        <a className="wordmark" href="#start" aria-label={{`${{productName}} – Startseite`}}>{{productName}}</a>
+        <a className="wordmark" href="#start" aria-label={`${productName} – Startseite`}>{productName}</a>
         <nav aria-label="Hauptnavigation">
           <a href="#leistungen">Leistungen</a>
           <a href="#profil">Profil</a>
@@ -125,15 +140,13 @@ export default function App() {{
       <main id="inhalt">
         <section className="hero" id="start" aria-labelledby="hero-title">
           <div className="hero-glow" aria-hidden="true" />
-          <p className="eyebrow" data-reveal>Digitaler Auftritt · Konzeptvorschau</p>
+          <p className="eyebrow" data-reveal>{siteContent.eyebrow}</p>
           <h1 id="hero-title" data-reveal>
-            Persönlich im Kern.<br /><span>Unverwechselbar im Web.</span>
+            {siteContent.headlineLead}<br /><span>{siteContent.headlineAccent}</span>
           </h1>
-          <p className="hero-copy" data-reveal>
-            Ein moderner digitaler Auftritt für {{productName}}, entwickelt für einen starken ersten Eindruck und einen einfachen Weg zur Anfrage.
-          </p>
+          <p className="hero-copy" data-reveal>{siteContent.heroText}</p>
           <div className="hero-actions" data-reveal>
-            <a className="button button-primary" href="#kontakt">Angebot anfragen <span aria-hidden="true">↗</span></a>
+            <a className="button button-primary" href="#kontakt">{siteContent.primaryCta} <span aria-hidden="true">↗</span></a>
             <a className="text-link" href="#leistungen">Konzept entdecken <span aria-hidden="true">↓</span></a>
           </div>
           <div className="scroll-cue" aria-hidden="true"><span /> Scroll</div>
@@ -141,36 +154,36 @@ export default function App() {{
 
         <section className="statement" id="profil" data-reveal>
           <p className="section-label">Der Anspruch</p>
-          <h2>Weniger Ablenkung.<br />Mehr Wirkung.</h2>
-          <p>Klare Inhalte, großzügige Flächen und gezielte Bewegung führen Besucher intuitiv durch das Angebot. Konkrete Unternehmensangaben werden vor Veröffentlichung gemeinsam abgestimmt.</p>
+          <h2>{siteContent.statementTitle}</h2>
+          <p>{siteContent.statementText}</p>
         </section>
 
         <section className="services" id="leistungen" aria-labelledby="services-title">
           <div className="section-heading" data-reveal>
             <p className="section-label">Das digitale Erlebnis</p>
-            <h2 id="services-title">Gebaut für Aufmerksamkeit und Vertrauen.</h2>
+            <h2 id="services-title">{siteContent.servicesTitle}</h2>
           </div>
           <div className="service-grid">
-            {{services.map((service) => (
-              <article className="service-card" data-reveal key={{service.number}}>
-                <span>{{service.number}}</span><h3>{{service.title}}</h3><p>{{service.text}}</p>
+            {services.map((service) => (
+              <article className="service-card" data-reveal key={service.number}>
+                <span>{service.number}</span><h3>{service.title}</h3><p>{service.text}</p>
               </article>
-            ))}}
+            ))}
           </div>
         </section>
 
         <section className="contact" id="kontakt" data-reveal>
           <p className="section-label">Nächster Schritt</p>
-          <h2>Aus einem guten ersten Eindruck wird ein Gespräch.</h2>
-          <p>Diese Konzeptvorschau zeigt die gestalterische Richtung. Inhalte, Leistungen und Kontaktdaten werden vor dem Livegang verifiziert.</p>
-          <a className="button button-light" href="mailto:kontakt@example.com">Gespräch vorbereiten <span aria-hidden="true">↗</span></a>
+          <h2>{siteContent.contactTitle}</h2>
+          <p>{siteContent.contactText}</p>
+          <a className="button button-light" href="mailto:kontakt@example.com">{siteContent.contactCta} <span aria-hidden="true">↗</span></a>
         </section>
       </main>
 
-      <footer><strong>{{productName}}</strong><span>Digitale Konzeptvorschau</span><a href="#start">Nach oben ↑</a></footer>
+      <footer><strong>{productName}</strong><span>Digitale Konzeptvorschau</span><a href="#start">Nach oben ↑</a></footer>
     </div>
   );
-}}
+}
 '''
     css = '''@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@500;600;700&display=swap");
 
@@ -285,6 +298,8 @@ footer strong { color: var(--ink); font-family: "Manrope", sans-serif; }
         "src/main.tsx": '''import { StrictMode } from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App";\n\ncreateRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);\n''',
         "src/App.tsx": app,
         "src/styles.css": css,
+        "src/content.ts": content,
+        "src/theme.css": '''/* BUILDER customization layer: override tokens and add project-specific visual accents here. */\n:root { --project-accent: var(--accent); }\n''',
     }
     return [
         {"path": f"{base}/{path}", "content": content}
@@ -325,8 +340,10 @@ def create_technical_blueprint(
                 BlueprintFile(path=f"{base}/tsconfig.json", purpose="Stabile TypeScript-Projektkonfiguration"),
                 BlueprintFile(path=f"{base}/vite.config.ts", purpose="Stabile Vite- und React-Konfiguration"),
                 BlueprintFile(path=f"{base}/src/main.tsx", purpose="React-Bootstrap"),
-                BlueprintFile(path=f"{base}/src/App.tsx", purpose="Seitenstruktur und Conversion Journey"),
-                BlueprintFile(path=f"{base}/src/styles.css", purpose="Designsystem, Responsive Layout und Motion"),
+                BlueprintFile(path=f"{base}/src/App.tsx", purpose="Geschützte semantische Seitenstruktur"),
+                BlueprintFile(path=f"{base}/src/styles.css", purpose="Geschütztes Responsive-, Accessibility- und Motion-Fundament"),
+                BlueprintFile(path=f"{base}/src/content.ts", purpose="Individualisierbare Inhalte und Conversion Journey"),
+                BlueprintFile(path=f"{base}/src/theme.css", purpose="Individualisierbare Design Tokens und visuelle Akzente"),
             ],
             test_plan=[
                 "npm install und npm run build im erzeugten Produktordner",

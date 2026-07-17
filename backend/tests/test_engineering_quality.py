@@ -58,12 +58,17 @@ def test_deterministic_scaffold_is_professional_and_passes_product_gates(
     validation = validate_product_quality(plan, str(tmp_path))
     paths = {item["path"] for item in files}
     app = (tmp_path / "projects/acme/src/App.tsx").read_text(encoding="utf-8")
+    content = (tmp_path / "projects/acme/src/content.ts").read_text(
+        encoding="utf-8"
+    )
     styles = (tmp_path / "projects/acme/src/styles.css").read_text(encoding="utf-8")
 
     assert validation["success"] is True
     assert "projects/acme/vite.config.ts" in paths
     assert "projects/acme/tsconfig.json" in paths
-    assert "Bairro Café-Bar" in app
+    assert "projects/acme/src/content.ts" in paths
+    assert "projects/acme/src/theme.css" in paths
+    assert "Bairro Café-Bar" in content
     assert "<nav" in app and "<main" in app and "<h1" in app
     assert "prefers-reduced-motion" in styles
     assert "@media (max-width" in styles

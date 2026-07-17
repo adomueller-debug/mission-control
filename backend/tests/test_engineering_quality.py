@@ -62,6 +62,9 @@ def test_deterministic_scaffold_is_professional_and_passes_product_gates(
         encoding="utf-8"
     )
     styles = (tmp_path / "projects/acme/src/styles.css").read_text(encoding="utf-8")
+    tsconfig = (tmp_path / "projects/acme/tsconfig.app.json").read_text(
+        encoding="utf-8"
+    )
 
     assert validation["success"] is True
     assert "projects/acme/vite.config.ts" in paths
@@ -72,6 +75,8 @@ def test_deterministic_scaffold_is_professional_and_passes_product_gates(
     assert "<nav" in app and "<main" in app and "<h1" in app
     assert "prefers-reduced-motion" in styles
     assert "@media (max-width" in styles
+    assert '"src/content.ts"' in tsconfig
+    assert '"src"' not in tsconfig
 
 
 def test_product_quality_rejects_plain_html_page(tmp_path: Path):

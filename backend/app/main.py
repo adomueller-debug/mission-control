@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,9 +55,10 @@ Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    run_service.resume_incomplete()
-    project_service.recover_autopilots()
-    mission_scheduler_v2.recover()
+    if os.getenv("MISSION_CONTROL_TESTING") != "1":
+        run_service.resume_incomplete()
+        project_service.recover_autopilots()
+        mission_scheduler_v2.recover()
     yield
 
 

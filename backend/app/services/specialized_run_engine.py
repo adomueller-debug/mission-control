@@ -18,6 +18,7 @@ from backend.app.services.coder import (
     OLLAMA_URL,
 )
 from backend.app.services.run_service import run_service
+from backend.app.services.website_sales_pipeline import OverpassLeadResearcher
 
 
 TASK_AGENTS = {
@@ -263,6 +264,9 @@ class SpecializedRunEngine:
     def _execute_task(
         self, task_type: str, task: str, agent: str
     ) -> tuple[SpecializedTaskOutput, str]:
+        if task_type == "research" and self._is_local_lead_research(task):
+            return self._execute_local_lead_research(task), "openstreetmap.overpass"
+
         webhook = os.getenv("N8N_TASK_EXECUTOR_WEBHOOK_URL", "").strip()
         if webhook and task_type in {"research", "business", "automation", "data"}:
             response = requests.post(
@@ -276,7 +280,8 @@ class SpecializedRunEngine:
                 timeout=60,
             )
             response.raise_for_status()
-            return SpecializedTaskOutput.model_validate(response.json()), "n8n.execute_task"
+            result = SpecializedTaskOutput.model_validate(response.json())
+            return self._canonicalize_artifact_types(task_type, result), "n8n.execute_task"
 
         contract = contract_for(task_type)
         prompt = f"""
@@ -299,8 +304,8 @@ Erzeuge ein belastbares, direkt nutzbares Arbeitsergebnis.
 - Bei Automation: liefere Workflow, Trigger, Schritte, Fehlerpfade und Freigaben.
 - Externe Nachrichten bleiben Entwürfe und dürfen nicht automatisch versendet werden.
 Antworte ausschließlich im vorgegebenen JSON-Schema.
-JSON-Schema:
-{json.dumps(SpecializedTaskOutput.model_json_schema(), ensure_ascii=False)}
+JSON-Schema (artifact_type muss exakt einem Enum-Wert entsprechen):
+{json.dumps(self._output_schema(task_type), ensure_ascii=False)}
 """
         last_error = ""
         for attempt in range(3):
@@ -317,7 +322,7 @@ JSON-Schema:
                     "prompt": prompt + retry,
                     "stream": False,
                     "think": False,
-                    "format": "json",
+                    "format": self._output_schema(task_type),
                     "options": {
                         "num_ctx": OLLAMA_CONTEXT,
                         "num_predict": max(OLLAMA_MAX_TOKENS, 4096),
@@ -326,14 +331,42 @@ JSON-Schema:
                 },
                 timeout=OLLAMA_TIMEOUT,
             )
-            response.raise_for_status()
+            if response.status_code == 400:
+                # Older Ollama versions accept JSON mode but reject parts of a
+                # full JSON Schema. The prompt still contains the contract and
+                # the result is validated locally below.
+                response = requests.post(
+                    OLLAMA_URL,
+                    json={
+                        "model": MODEL,
+                        "prompt": prompt + retry,
+                        "stream": False,
+                        "think": False,
+                        "format": "json",
+                        "options": {
+                            "num_ctx": OLLAMA_CONTEXT,
+                            "num_predict": max(OLLAMA_MAX_TOKENS, 4096),
+                            "temperature": 0.1 if attempt else 0.15,
+                        },
+                    },
+                    timeout=OLLAMA_TIMEOUT,
+                )
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                detail = response.text.strip()[:1_000]
+                raise RuntimeError(
+                    f"Ollama-Anfrage fehlgeschlagen ({response.status_code}): {detail}"
+                ) from exc
             raw = re.sub(
                 r"^```(?:json)?\s*|\s*```$",
                 "",
                 response.json()["response"].strip(),
             )
             try:
-                result = SpecializedTaskOutput.model_validate_json(raw)
+                result = self._canonicalize_artifact_types(
+                    task_type, SpecializedTaskOutput.model_validate_json(raw)
+                )
                 validation = self._validate_result(task_type, result)
                 if validation["success"] or result.status != "completed":
                     return result, "ollama.specialized"
@@ -347,6 +380,113 @@ JSON-Schema:
         raise ValueError(
             "Ollama konnte den Agentenvertrag nach drei Versuchen nicht erfüllen: "
             + last_error
+        )
+
+    @staticmethod
+    def _output_schema(task_type: str) -> dict[str, Any]:
+        schema = SpecializedTaskOutput.model_json_schema()
+        contract = contract_for(task_type)
+        artifact = schema.get("$defs", {}).get("SpecializedArtifact", {})
+        properties = artifact.get("properties", {})
+        artifact_type = properties.get("artifact_type", {})
+        artifact_type["enum"] = list(contract.required_artifact_types)
+        artifact_type.pop("default", None)
+        artifact_type["description"] = "Verbindlicher Artefakttyp; exakt einen Enum-Wert verwenden."
+        artifacts = schema.get("properties", {}).get("artifacts", {})
+        artifacts["minItems"] = contract.minimum_artifacts
+        return schema
+
+    @staticmethod
+    def _canonicalize_artifact_types(
+        task_type: str, result: SpecializedTaskOutput
+    ) -> SpecializedTaskOutput:
+        contract = contract_for(task_type)
+        required = set(contract.required_artifact_types)
+        present = {item.artifact_type for item in result.artifacts}
+        if required.issubset(present) or len(required) != 1:
+            return result
+        generic_aliases = {
+            "document",
+            "report",
+            "brief",
+            "research",
+            "research_brief",
+            task_type,
+        }
+        candidates = [
+            item
+            for item in result.artifacts
+            if item.artifact_type.casefold() in generic_aliases
+            and len(re.sub(r"\s+", " ", item.content).strip()) >= 200
+        ]
+        if len(candidates) == 1:
+            previous = candidates[0].artifact_type
+            candidates[0].artifact_type = next(iter(required))
+            result.findings.append(
+                f"Artefakttyp '{previous}' wurde anhand des Rollenvertrags zu "
+                f"'{candidates[0].artifact_type}' normalisiert."
+            )
+        return result
+
+    @staticmethod
+    def _is_local_lead_research(task: str) -> bool:
+        lower = task.casefold()
+        return bool(
+            re.search(r"\b(lead|unternehmen|betrieb|zielmarkt)\w*\b", lower)
+            and re.search(r"\b(website|webseite|kundengewinnung|crm)\w*\b", lower)
+        )
+
+    @staticmethod
+    def _execute_local_lead_research(task: str) -> SpecializedTaskOutput:
+        city_match = re.search(
+            r"(?:region|stadt|ort|in)\s*[:=-]?\s*([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]{2,})",
+            task,
+        )
+        city = city_match.group(1) if city_match else "Heidelberg"
+        limit_match = re.search(r"(?:maximal|bis zu|für den anfang)\s+(\d{1,2})", task, re.IGNORECASE)
+        limit = min(20, max(1, int(limit_match.group(1)) if limit_match else 20))
+        leads = OverpassLeadResearcher().find(city, limit)
+        if not leads:
+            return SpecializedTaskOutput(
+                status="needs_setup",
+                summary=f"Für {city} wurden in der öffentlichen Datenquelle keine passenden Einträge gefunden.",
+                next_actions=["Ort oder Suchkriterien anpassen und Recherche erneut starten."],
+            )
+        rows = [lead.model_dump() for lead in leads]
+        content = json.dumps(
+            {
+                "city": city,
+                "method": "OpenStreetMap/Overpass; Website- und Kontaktdaten aus öffentlichen Brancheneinträgen",
+                "lead_count": len(rows),
+                "leads": rows,
+                "limitations": [
+                    "Fehlender Website-Link ist ein Bedarfssignal, aber kein Beweis, dass keine Website existiert.",
+                    "Bestehende Websites benötigen vor Kontaktaufnahme eine manuelle UX-Prüfung.",
+                    "Es wurden keine E-Mails versendet.",
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return SpecializedTaskOutput(
+            summary=f"ATLAS hat {len(rows)} öffentliche Unternehmenseinträge in {city} priorisiert.",
+            findings=[
+                f"{lead.name}: Opportunity {lead.opportunity_score}/100 – "
+                + "; ".join(lead.reasons)
+                for lead in leads[:10]
+            ],
+            artifacts=[
+                SpecializedArtifact(
+                    title=f"Lead-Recherche {city}",
+                    content=content,
+                    artifact_type="research_report",
+                )
+            ],
+            next_actions=[
+                "Leads mit öffentlicher geschäftlicher E-Mail manuell verifizieren.",
+                "FLOW kann verifizierte Leads anschließend in CRM und Entwürfe überführen.",
+            ],
+            sources=[lead.source_url for lead in leads],
         )
 
 

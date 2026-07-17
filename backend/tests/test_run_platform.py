@@ -280,6 +280,71 @@ def test_specialized_executor_rejects_missing_role_contract_artifacts():
     }
 
 
+def test_specialized_executor_normalizes_one_substantive_generic_artifact():
+    output = SpecializedTaskOutput(
+        summary="Lokaler Markt wurde mit nachvollziehbarer Methode untersucht.",
+        findings=["Öffentliche Brancheneinträge wurden getrennt von Annahmen bewertet."],
+        artifacts=[
+            SpecializedArtifact(
+                title="Research Brief",
+                content=(
+                    "Die Recherche dokumentiert Datenquelle, Methode, Bedarfssignale, "
+                    "Einschränkungen und die nächste manuelle Prüfung. Jeder Eintrag besitzt "
+                    "eine öffentliche Quelladresse. Ein fehlender Website-Link wird ausdrücklich "
+                    "nur als Signal und nicht als Beweis gewertet. Vor einer Kontaktaufnahme "
+                    "müssen Website und geschäftliche E-Mail erneut verifiziert werden."
+                ),
+                artifact_type="document",
+            )
+        ],
+        sources=["https://www.openstreetmap.org/node/1"],
+    )
+
+    normalized = specialized_run_engine._canonicalize_artifact_types(
+        "research", output
+    )
+
+    assert normalized.artifacts[0].artifact_type == "research_report"
+    assert specialized_run_engine._validate_result("research", normalized)["success"]
+
+
+def test_atlas_uses_real_overpass_tool_for_local_lead_research(monkeypatch):
+    lead = SalesLead(
+        id="lead-1",
+        name="Heidelberger Beispielbetrieb",
+        city="Heidelberg",
+        source_url="https://www.openstreetmap.org/node/1",
+        website_score=0,
+        opportunity_score=75,
+        reasons=["Keine Website im öffentlichen Brancheneintrag hinterlegt"],
+    )
+    monkeypatch.setattr(
+        "backend.app.services.specialized_run_engine.OverpassLeadResearcher.find",
+        lambda self, city, limit: [lead],
+    )
+
+    result, tool = specialized_run_engine._execute_task(
+        "research",
+        "Priorisiere Unternehmen in Heidelberg mit fehlender Website für das CRM.",
+        "atlas",
+    )
+
+    assert tool == "openstreetmap.overpass"
+    assert result.artifacts[0].artifact_type == "research_report"
+    assert result.sources == [lead.source_url]
+    assert specialized_run_engine._validate_result("research", result)["success"]
+
+
+def test_task_schema_constrains_artifact_type_for_ollama():
+    schema = specialized_run_engine._output_schema("research")
+    artifact_type = schema["$defs"]["SpecializedArtifact"]["properties"][
+        "artifact_type"
+    ]
+
+    assert artifact_type["enum"] == ["research_report"]
+    assert "default" not in artifact_type
+
+
 def test_website_sales_pipeline_researches_scores_logs_and_drafts_without_sending():
     class Researcher:
         def find(self, city: str, limit: int):

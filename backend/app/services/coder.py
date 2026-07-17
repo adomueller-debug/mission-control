@@ -80,6 +80,7 @@ def execute_plan(
     blueprint: BlueprintArtifact | dict | None = None,
 ) -> dict:
     workspace_context = load_workspace_context(plan.expected_files, workspace)
+    full_replacement_mode = "STRATEGIEWECHSEL" in feedback
     scope_instruction = (
         f"Erstelle ein eigenständiges neues Produkt ausschließlich unter "
         f"`{plan.output_directory}/`. Nutze dafür `files`; ändere keine bestehenden "
@@ -126,7 +127,15 @@ Position. Verwende `occurrence` niemals, um eine unbeabsichtigt mehrdeutige Änd
 erzwingen.
 `replacement` ersetzt diesen Text vollständig. Gib niemals komplette unveränderte Dateien aus.
 Verwende `edits` ausschließlich für Dateien, die bereits im Workspace existieren.
-Verwende `files` für jede neue Datei und liefere dort den vollständigen Dateiinhalt.
+Verwende `files` für jede neue Datei und liefere dort den vollständigen Dateiinhalt. Im
+Produktmodus darf `files` bei einer ausdrücklich verlangten Vollersatz-Reparatur auch eine
+bestehende Datei vollständig ersetzen.
+{
+    "REPARATURMODUS VOLLERSATZ: `edits` muss leer bleiben. Liefere jede betroffene Datei "
+    "mit vollständigem Inhalt in `files`; insbesondere auch package.json und Stylesheets."
+    if full_replacement_mode
+    else ""
+}
 Antworte ausschließlich im vorgegebenen JSON-Schema.
 Erzeuge mindestens einen Eintrag in `edits` oder `files`.
 Gib keine Markdown-Codeblöcke und keine zusätzliche Erklärung aus.

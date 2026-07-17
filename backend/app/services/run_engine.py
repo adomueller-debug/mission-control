@@ -430,7 +430,10 @@ class AutonomousRunEngine:
                     run_service.add_event(run_id, "patch.rejected", failure)
                     self._schedule_repair(run_id, failure)
                     signature = self._failure_signature(failure)
-                    repeated = signature == previous_failure_signature
+                    repeated = (
+                        signature == previous_failure_signature
+                        or signature == ("patch-application",)
+                    )
                     previous_failure_signature = signature
                     feedback = self._repair_feedback(failure, repeated=repeated)
                     if repeated:

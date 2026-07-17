@@ -308,6 +308,37 @@ def test_specialized_executor_normalizes_one_substantive_generic_artifact():
     assert specialized_run_engine._validate_result("research", normalized)["success"]
 
 
+def test_sentinel_gets_deterministic_risk_and_approval_policy():
+    output = SpecializedTaskOutput(
+        summary="Sicherheitsprüfung der geplanten Aktion abgeschlossen.",
+        findings=["Zugangsdaten dürfen nicht in Ereignissen erscheinen."],
+        artifacts=[
+            SpecializedArtifact(
+                title="Security Review",
+                content=(
+                    "Secrets und Zugangsdaten bleiben in der lokalen Umgebung. "
+                    "Personenbezogene Daten werden nach DSGVO auf das notwendige Maß "
+                    "beschränkt. Berechtigungen folgen dem Least-Privilege-Prinzip, "
+                    "Audit-Ereignisse enthalten ausschließlich redigierte Metadaten. "
+                    "Empfänger und Zielkonto müssen vor jeder Außenwirkung geprüft werden."
+                ),
+                artifact_type="security_review",
+            )
+        ],
+    )
+
+    before = specialized_run_engine._validate_result("security", output)
+    enriched = specialized_run_engine._apply_deterministic_policy("security", output)
+    after = specialized_run_engine._validate_result("security", enriched)
+
+    assert before["success"] is False
+    assert after["success"] is True
+    assert "Risiko und Risikostufe" in enriched.artifacts[0].content
+    assert "Dieser Security Review erteilt selbst keine Freigabe" in (
+        enriched.artifacts[0].content
+    )
+
+
 def test_atlas_uses_real_overpass_tool_for_local_lead_research(monkeypatch):
     lead = SalesLead(
         id="lead-1",

@@ -244,8 +244,8 @@ class SpecializedRunEngine:
                 ("secret", "geheimnis", "zugangsdaten"),
                 ("personenbezogen", "datenschutz", "dsgvo"),
                 ("berechtigung", "permission"),
-                ("risiko", "risk"),
-                ("freigabe", "approval"),
+                ("risiko", "risk", "gefährdung", "schweregrad"),
+                ("freigabe", "approval", "genehmigung", "bestätigung", "zustimmung"),
             ),
             "design": (
                 ("typografie", "typography"),
@@ -281,7 +281,8 @@ class SpecializedRunEngine:
             )
             response.raise_for_status()
             result = SpecializedTaskOutput.model_validate(response.json())
-            return self._canonicalize_artifact_types(task_type, result), "n8n.execute_task"
+            result = self._canonicalize_artifact_types(task_type, result)
+            return self._apply_deterministic_policy(task_type, result), "n8n.execute_task"
 
         contract = contract_for(task_type)
         prompt = f"""
@@ -302,6 +303,7 @@ Erzeuge ein belastbares, direkt nutzbares Arbeitsergebnis.
 - Bei Business: liefere Entscheidungsvorlage, Angebot oder Prozessartefakt.
 - Bei Data: definiere Kennzahlen, Berechnung und Datenquelle.
 - Bei Automation: liefere Workflow, Trigger, Schritte, Fehlerpfade und Freigaben.
+- Bei Security: nenne ausdrücklich Risiko, Risikostufe, Abhilfe und Freigabebedarf. Eine Sicherheitsprüfung erteilt selbst niemals eine Freigabe für Außenwirkungen.
 - Externe Nachrichten bleiben Entwürfe und dürfen nicht automatisch versendet werden.
 Antworte ausschließlich im vorgegebenen JSON-Schema.
 JSON-Schema (artifact_type muss exakt einem Enum-Wert entsprechen):
@@ -367,6 +369,7 @@ JSON-Schema (artifact_type muss exakt einem Enum-Wert entsprechen):
                 result = self._canonicalize_artifact_types(
                     task_type, SpecializedTaskOutput.model_validate_json(raw)
                 )
+                result = self._apply_deterministic_policy(task_type, result)
                 validation = self._validate_result(task_type, result)
                 if validation["success"] or result.status != "completed":
                     return result, "ollama.specialized"
@@ -426,6 +429,45 @@ JSON-Schema (artifact_type muss exakt einem Enum-Wert entsprechen):
                 f"Artefakttyp '{previous}' wurde anhand des Rollenvertrags zu "
                 f"'{candidates[0].artifact_type}' normalisiert."
             )
+        return result
+
+    @staticmethod
+    def _apply_deterministic_policy(
+        task_type: str,
+        result: SpecializedTaskOutput,
+    ) -> SpecializedTaskOutput:
+        """Attach non-negotiable local policy instead of asking the LLM to invent it."""
+        if task_type != "security" or result.status != "completed":
+            return result
+        review = next(
+            (
+                item
+                for item in result.artifacts
+                if item.artifact_type == "security_review"
+            ),
+            None,
+        )
+        if review is None:
+            return result
+
+        policy = (
+            "\n\nDeterministische Mission-Control-Risikopolicy:\n"
+            "Risiko und Risikostufe: Lokale Analyse und Entwürfe sind Stufe 0; "
+            "protokollierte Drive-, CRM- und Git-Branch-Aktionen Stufe 1; "
+            "E-Mail-Versand, Kalendereinladungen, Veröffentlichungen und Deployments "
+            "Stufe 2; Käufe, Zahlungen, Verträge, externe Löschungen und "
+            "Berechtigungsänderungen Stufe 3.\n"
+            "Freigabe: Stufe 2 benötigt eine gebündelte Approval-Entscheidung und "
+            "Stufe 3 immer eine einzelne Bestätigung mit Empfänger, Inhalt, Betrag "
+            "und Auswirkung. Dieser Security Review erteilt selbst keine Freigabe "
+            "und führt keine Außenwirkung aus. Secrets bleiben außerhalb von Prompts, "
+            "Events und Artefakten; personenbezogene Daten werden minimiert und "
+            "Berechtigungen nach dem Least-Privilege-Prinzip vergeben."
+        )
+        review.content = review.content[: 20_000 - len(policy)] + policy
+        marker = "Mission-Control-Risikopolicy wurde deterministisch angewendet."
+        if marker not in result.findings:
+            result.findings.append(marker)
         return result
 
     @staticmethod

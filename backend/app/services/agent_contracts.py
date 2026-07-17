@@ -94,6 +94,7 @@ AGENT_CONTRACTS: dict[str, AgentContract] = {
         quality_rules=(
             "Secrets, personenbezogene Daten, Berechtigungen und Auditpflichten prüfen.",
             "Risiken nach Schweregrad und konkreter Abhilfe priorisieren.",
+            "Für jede Außenwirkung Risikostufe und erforderliche Freigabe ausdrücklich festlegen.",
         ),
     ),
     "devops": AgentContract(

@@ -11,10 +11,14 @@ from sqlalchemy import select
 
 from backend.app.core.workspace_security import resolve_workspace
 from backend.app.database.database import SessionLocal
-from backend.app.models.project import Project, ProjectTask
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask
 from backend.app.models.run import AgentRun
 from backend.app.services.agent_catalog import get_agent
 from backend.app.services.run_service import run_service
+from backend.app.services.project_artifact_service import (
+    artifact_to_dict,
+    project_artifact_service,
+)
 
 
 PROJECT_STATUSES = {"idea", "planning", "active", "paused", "completed", "archived"}
@@ -72,11 +76,20 @@ def _task_dict(task: ProjectTask) -> dict[str, Any]:
     }
 
 
-def _project_dict(project: Project, tasks: list[ProjectTask]) -> dict[str, Any]:
+def _project_dict(
+    project: Project,
+    tasks: list[ProjectTask],
+    artifacts: list[ProjectArtifact] | None = None,
+) -> dict[str, Any]:
     counts = Counter(task.status for task in tasks)
     relevant = [task for task in tasks if task.status != "cancelled"]
     completed = counts["completed"]
     progress = round((completed / len(relevant)) * 100) if relevant else 0
+    artifact_rows = artifacts or []
+    synced_artifacts = sum(item.sync_status == "synced" for item in artifact_rows)
+    delivery_progress = (
+        round((synced_artifacts / len(artifact_rows)) * 100) if artifact_rows else 0
+    )
     active_agents = sorted(
         {
             task.assigned_agent
@@ -98,12 +111,20 @@ def _project_dict(project: Project, tasks: list[ProjectTask]) -> dict[str, Any]:
         "budget_cents": project.budget_cents,
         "revenue_target_cents": project.revenue_target_cents,
         "autopilot_enabled": project.autopilot_enabled,
+        "delivery_status": project.delivery_status,
+        "delivery_error": project.delivery_error,
+        "delivery_progress": delivery_progress,
+        "delivery_synced": synced_artifacts,
+        "delivery_total": len(artifact_rows),
+        "delivery_synced_at": _iso(project.delivery_synced_at),
+        "drive_url": project.drive_url or None,
         "created_at": _iso(project.created_at),
         "updated_at": _iso(project.updated_at),
         "progress": progress,
         "task_counts": dict(counts),
         "active_agents": active_agents,
         "tasks": [_task_dict(task) for task in tasks],
+        "artifacts": [artifact_to_dict(item) for item in artifact_rows],
     }
 
 
@@ -172,10 +193,23 @@ class ProjectService:
             tasks = db.scalars(
                 select(ProjectTask).order_by(ProjectTask.priority, ProjectTask.created_at)
             ).all()
+            artifacts = db.scalars(
+                select(ProjectArtifact).order_by(ProjectArtifact.created_at.desc())
+            ).all()
             grouped: dict[str, list[ProjectTask]] = defaultdict(list)
+            grouped_artifacts: dict[str, list[ProjectArtifact]] = defaultdict(list)
             for task in tasks:
                 grouped[task.project_id].append(task)
-            return [_project_dict(project, grouped[project.id]) for project in projects]
+            for artifact in artifacts:
+                grouped_artifacts[artifact.project_id].append(artifact)
+            return [
+                _project_dict(
+                    project,
+                    grouped[project.id],
+                    grouped_artifacts[project.id],
+                )
+                for project in projects
+            ]
 
     def get_project(self, project_id: str) -> dict[str, Any] | None:
         with SessionLocal() as db:
@@ -188,7 +222,12 @@ class ProjectService:
                 .where(ProjectTask.project_id == project_id)
                 .order_by(ProjectTask.priority, ProjectTask.created_at)
             ).all()
-            return _project_dict(project, list(tasks))
+            artifacts = db.scalars(
+                select(ProjectArtifact)
+                .where(ProjectArtifact.project_id == project_id)
+                .order_by(ProjectArtifact.created_at.desc())
+            ).all()
+            return _project_dict(project, list(tasks), list(artifacts))
 
     def update_project(self, project_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         if "status" in fields:
@@ -214,6 +253,50 @@ class ProjectService:
             project.updated_at = datetime.now(UTC)
             db.commit()
         return self.get_project(project_id)
+
+    def archive_project(self, project_id: str) -> dict[str, Any]:
+        run_ids: list[str] = []
+        with SessionLocal() as db:
+            project = db.get(Project, project_id)
+            if project is None:
+                raise KeyError(project_id)
+            project.status = "archived"
+            project.autopilot_enabled = False
+            project.updated_at = datetime.now(UTC)
+            active_tasks = db.scalars(
+                select(ProjectTask).where(
+                    ProjectTask.project_id == project_id,
+                    ProjectTask.status.in_({"queued", "in_progress", "review"}),
+                )
+            ).all()
+            for task in active_tasks:
+                task.status = "cancelled"
+                task.updated_at = project.updated_at
+                if task.run_id:
+                    run_ids.append(task.run_id)
+            db.commit()
+        for run_id in run_ids:
+            run_service.cancel(run_id)
+        project_data = self.get_project(project_id)
+        if project_data is None:
+            raise KeyError(project_id)
+        return project_data
+
+    def restore_project(self, project_id: str) -> dict[str, Any]:
+        with SessionLocal() as db:
+            project = db.get(Project, project_id)
+            if project is None:
+                raise KeyError(project_id)
+            if project.status != "archived":
+                raise ValueError("Nur archivierte Projekte können wiederhergestellt werden.")
+            project.status = "paused"
+            project.autopilot_enabled = False
+            project.updated_at = datetime.now(UTC)
+            db.commit()
+        project_data = self.get_project(project_id)
+        if project_data is None:
+            raise KeyError(project_id)
+        return project_data
 
     def create_task(
         self,
@@ -445,6 +528,7 @@ class ProjectService:
                         project_id,
                         {"status": "completed", "autopilot_enabled": False},
                     )
+                    project_artifact_service.schedule_sync(project_id)
                     return
 
                 completed_ids = {
@@ -480,21 +564,34 @@ class ProjectService:
             select(ProjectTask).where(ProjectTask.run_id.is_not(None))
         ).all()
         changed = False
+        sync_projects: set[str] = set()
         for task in tasks:
             run = db.get(AgentRun, task.run_id)
             if run is None:
                 continue
-            status = RUN_TO_TASK_STATUS.get(run.status, task.status)
-            if status != task.status:
-                task.status = status
-                task.updated_at = datetime.now(UTC)
-                changed = True
+            project = db.get(Project, task.project_id)
+            if project is None or project.status != "archived":
+                status = RUN_TO_TASK_STATUS.get(run.status, task.status)
+                if status != task.status:
+                    task.status = status
+                    task.updated_at = datetime.now(UTC)
+                    changed = True
             if run.status == "completed" and run.result and run.result != task.result:
                 task.result = run.result
                 task.updated_at = datetime.now(UTC)
                 changed = True
+            if run.status == "completed" and run.result:
+                if project is not None:
+                    _, created = project_artifact_service.archive_completed_task(
+                        db, project, task, run
+                    )
+                    changed = changed or created
+                    if created:
+                        sync_projects.add(project.id)
         if changed:
             db.commit()
+        for project_id in sync_projects:
+            project_artifact_service.schedule_sync(project_id)
 
     @staticmethod
     def _validate_project_status(status: str) -> None:

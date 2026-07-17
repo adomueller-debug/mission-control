@@ -52,9 +52,15 @@ def create_execution_plan(task: str, workspace: str | None = None) -> ExecutionP
             ),
             PlanStep(
                 id=4,
-                title="Review",
-                description="Code prüfen",
+                title="Produktvalidierung",
+                description="Code und Produkt gegen messbare Quality Gates prüfen",
                 agent="forge_reviewer",
+            ),
+            PlanStep(
+                id=5,
+                title="Release Candidate",
+                description="Releasebericht und reproduzierbaren Übergabestand erzeugen",
+                agent="forge_publisher",
             ),
         ],
     )

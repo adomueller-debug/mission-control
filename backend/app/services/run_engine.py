@@ -11,6 +11,13 @@ from backend.app.core.workspace_security import (
 from backend.app.services.agent_catalog import STEP_TO_AGENT
 from backend.app.services.agent_team import agent_team
 from backend.app.services.coder import execute_plan
+from backend.app.services.engineering_quality import (
+    create_react_vite_scaffold,
+    create_release_candidate,
+    create_technical_blueprint,
+    validate_product_build,
+    validate_product_quality,
+)
 from backend.app.services.github_publisher import github_publisher
 from backend.app.services.planner import create_execution_plan
 from backend.app.services.run_service import run_service
@@ -28,6 +35,30 @@ class RunLimitExceeded(RuntimeError):
 
 
 class AutonomousRunEngine:
+    _SCAFFOLD_OWNED_PATHS = {
+        "index.html",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.app.json",
+        "tsconfig.node.json",
+        "vite.config.ts",
+        "src/main.tsx",
+        "src/vite-env.d.ts",
+        "src/App.tsx",
+        "src/styles.css",
+    }
+
+    def _assert_product_path_is_customizable(self, plan: Any, path: str) -> None:
+        output_directory = (plan.output_directory or "").rstrip("/")
+        prefix = f"{output_directory}/"
+        relative = path[len(prefix):] if path.startswith(prefix) else path
+        if relative in self._SCAFFOLD_OWNED_PATHS:
+            raise ValueError(
+                f"{path} gehört zum deterministischen Startergerüst und darf von "
+                "BUILDER nicht verändert werden. Individualisiere src/content.ts, "
+                "src/theme.css, Komponenten oder Assets."
+            )
+
     def _creation_files(
         self,
         plan: Any,
@@ -47,7 +78,7 @@ class AutonomousRunEngine:
                     "content": edit.get("replacement", ""),
                 }
         files = list(files_by_path.values())
-        if not files:
+        if not files and not coder_result.get("edits"):
             raise ValueError("Produktmodus benötigt mindestens eine neue Datei.")
         invalid = [
             item["path"]
@@ -60,7 +91,72 @@ class AutonomousRunEngine:
                 "Produktdateien müssen im vorgesehenen Projektordner liegen: "
                 + ", ".join(invalid)
             )
+        for item in files:
+            self._assert_product_path_is_customizable(plan, item["path"])
         return files
+
+    def _creation_edits(
+        self,
+        plan: Any,
+        workspace: str,
+        coder_result: dict[str, Any],
+        *,
+        full_replacement: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Keep repair edits for files that already exist inside the product root."""
+        if full_replacement:
+            return []
+        output_directory = (plan.output_directory or "").rstrip("/")
+        replacement_paths = {
+            item["path"] for item in coder_result.get("files", [])
+        }
+        edits: list[dict[str, Any]] = []
+        for item in coder_result.get("edits", []):
+            path = item["path"]
+            if not output_directory or not path.startswith(f"{output_directory}/"):
+                raise ValueError(
+                    "Produkt-Edits müssen im vorgesehenen Projektordner liegen: " + path
+                )
+            self._assert_product_path_is_customizable(plan, path)
+            if path in replacement_paths:
+                continue
+            if resolve_workspace_path(workspace, path).exists():
+                edits.append(item)
+        return edits
+
+    @staticmethod
+    def _failure_signature(failure: dict[str, Any]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                str(check.get("name", "unknown"))
+                for check in failure.get("checks", [])
+                if not check.get("success")
+            )
+        )
+
+    @staticmethod
+    def _repair_feedback(
+        failure: dict[str, Any],
+        *,
+        repeated: bool = False,
+    ) -> str:
+        failed = [
+            check for check in failure.get("checks", []) if not check.get("success")
+        ]
+        lines = ["Behebe ausschließlich diese fehlgeschlagenen Gates:"]
+        for check in failed:
+            output = " ".join(str(check.get("output", "")).split())[-1_200:]
+            lines.append(f"- {check.get('name', 'unknown')}: {output}")
+        if repeated:
+            lines.extend(
+                [
+                    "STRATEGIEWECHSEL: Derselbe Gate-Satz ist erneut fehlgeschlagen.",
+                    "Ersetze ausschließlich betroffene individualisierbare Dateien wie src/content.ts oder src/theme.css vollständig über `files`, statt das Fundament nachzubauen.",
+                    "Erhalte das von Mission Control bereitgestellte Inhalts-Schema in src/content.ts vollständig und ändere nur dessen Werte.",
+                    "package.json, index.html, TypeScript-/Vite-Konfiguration, src/main.tsx, src/App.tsx und src/styles.css gehören Mission Control und dürfen nie ausgegeben werden.",
+                ]
+            )
+        return "\n".join(lines)[-6_000:]
 
     def _activate_agent(self, run_id: str, status: str, agent: str) -> None:
         current = run_service.get(run_id)
@@ -276,14 +372,71 @@ class AutonomousRunEngine:
             run_service.update(run_id, plan=plan.model_dump())
             run_service.add_event(run_id, "plan.created", plan.model_dump())
             self._activate_agent(run_id, "planning", "technical_planner")
+            blueprint = create_technical_blueprint(plan, run["workspace"])
+            if not blueprint.approved:
+                raise RuntimeError("BLUEPRINT hat die technische Umsetzung nicht freigegeben.")
+            blueprint_payload = blueprint.model_dump()
+            run_service.add_event(run_id, "blueprint.created", blueprint_payload)
+            run_service.save_checkpoint(
+                run_id,
+                {
+                    "phase": "blueprint_approved",
+                    "source_workspace": source_workspace,
+                    "sandbox": sandbox,
+                    "originals": originals,
+                    "changed_paths": sorted(changed_paths),
+                    "blueprint": blueprint_payload,
+                },
+            )
+
+            if plan.creation_mode and plan.output_directory:
+                scaffold_files = create_react_vite_scaffold(plan, run["task"])
+                changed_paths.update(
+                    self._apply_files(
+                        run_id,
+                        run["workspace"],
+                        scaffold_files,
+                        originals,
+                    )
+                )
+                scaffold_payload = {
+                    "version": "1.0",
+                    "stack": "react-vite-typescript",
+                    "root": plan.output_directory,
+                    "files": [item["path"] for item in scaffold_files],
+                }
+                run_service.add_event(
+                    run_id,
+                    "product.scaffold.created",
+                    scaffold_payload,
+                )
+                run_service.save_checkpoint(
+                    run_id,
+                    {
+                        "phase": "product_scaffold_created",
+                        "source_workspace": source_workspace,
+                        "sandbox": sandbox,
+                        "originals": originals,
+                        "changed_paths": sorted(changed_paths),
+                        "blueprint": blueprint_payload,
+                        "scaffold": scaffold_payload,
+                    },
+                )
 
             feedback = ""
             validation: dict[str, Any] = {"success": False, "checks": []}
             summary = ""
+            failure_counts: dict[tuple[str, ...], int] = {}
+            last_validation_failure: dict[str, Any] = {"success": False, "checks": []}
             while True:
                 run = self._guard(run_id, started_at)
                 self._activate_agent(run_id, "executing", "coder")
-                coder_result = execute_plan(plan, run["workspace"], feedback)
+                coder_result = execute_plan(
+                    plan,
+                    run["workspace"],
+                    feedback,
+                    blueprint,
+                )
                 self._tool_event(
                     run_id, "ollama.generate", {"status": coder_result["status"]}
                 )
@@ -294,6 +447,12 @@ class AutonomousRunEngine:
                 summary = coder_result.get("summary", "")
                 try:
                     if plan.creation_mode:
+                        repair_edits = self._creation_edits(
+                            plan,
+                            run["workspace"],
+                            coder_result,
+                            full_replacement="STRATEGIEWECHSEL" in feedback,
+                        )
                         changed_paths.update(
                             self._apply_files(
                                 run_id,
@@ -304,6 +463,15 @@ class AutonomousRunEngine:
                                 originals,
                             )
                         )
+                        if repair_edits:
+                            changed_paths.update(
+                                self._apply_edits(
+                                    run_id,
+                                    run["workspace"],
+                                    repair_edits,
+                                    originals,
+                                )
+                            )
                     elif coder_result.get("edits"):
                         changed_paths.update(
                             self._apply_edits(
@@ -334,11 +502,36 @@ class AutonomousRunEngine:
                         ],
                     }
                     run_service.add_event(run_id, "patch.rejected", failure)
-                    repair_feedback = self._schedule_repair(
-                        run_id,
-                        failure,
+                    self._schedule_repair(run_id, failure)
+                    signature = self._failure_signature(failure)
+                    failure_counts[signature] = failure_counts.get(signature, 0) + 1
+                    repeated = (
+                        failure_counts[signature] > 1
+                        or signature == ("patch-application",)
                     )
-                    feedback = f"{feedback}\n\n{repair_feedback}"[-30_000:]
+                    feedback_failure = failure
+                    if signature == ("patch-application",) and last_validation_failure["checks"]:
+                        patch_checks = failure.get("checks", [])
+                        if not isinstance(patch_checks, list):
+                            patch_checks = []
+                        feedback_failure = {
+                            "success": False,
+                            "checks": patch_checks
+                            + [
+                                    check
+                                    for check in last_validation_failure["checks"]
+                                    if not check.get("success")
+                            ],
+                        }
+                    feedback = self._repair_feedback(
+                        feedback_failure, repeated=repeated
+                    )
+                    if repeated:
+                        run_service.add_event(
+                            run_id,
+                            "repair.strategy_changed",
+                            {"strategy": "replace_target_files", "gates": list(signature)},
+                        )
                     continue
                 run_service.save_checkpoint(
                     run_id,
@@ -351,7 +544,40 @@ class AutonomousRunEngine:
 
                 self._guard(run_id, started_at)
                 self._activate_agent(run_id, "validating", "validator")
-                validation = validate_project(run["workspace"])
+                run_service.add_event(
+                    run_id,
+                    "validation.phase",
+                    {"phase": "product_static", "label": "Produktstruktur prüfen"},
+                )
+                product_validation = validate_product_quality(plan, run["workspace"])
+                product_build: dict[str, Any] = {"success": True, "checks": []}
+                repository_validation: dict[str, Any] = {"success": True, "checks": []}
+                if product_validation["success"]:
+                    run_service.add_event(
+                        run_id,
+                        "validation.phase",
+                        {"phase": "product_build", "label": "Produkt-Build ausführen"},
+                    )
+                    product_build = validate_product_build(plan, run["workspace"])
+                if product_validation["success"] and product_build["success"]:
+                    run_service.add_event(
+                        run_id,
+                        "validation.phase",
+                        {"phase": "repository", "label": "Vollständige Merge-Gates prüfen"},
+                    )
+                    repository_validation = validate_project(run["workspace"])
+                validation = {
+                    "success": (
+                        product_validation["success"]
+                        and product_build["success"]
+                        and repository_validation["success"]
+                    ),
+                    "checks": [
+                        *product_validation["checks"],
+                        *product_build["checks"],
+                        *repository_validation["checks"],
+                    ],
+                }
                 self._tool_event(run_id, "validate_project", validation)
                 run_service.save_checkpoint(
                     run_id,
@@ -398,13 +624,35 @@ class AutonomousRunEngine:
                         ],
                     }
 
-                repair_feedback = self._schedule_repair(run_id, validation)
-                feedback = f"{feedback}\n\n{repair_feedback}"[-30_000:]
+                self._schedule_repair(run_id, validation)
+                signature = self._failure_signature(validation)
+                failure_counts[signature] = failure_counts.get(signature, 0) + 1
+                repeated = failure_counts[signature] > 1
+                last_validation_failure = validation
+                feedback = self._repair_feedback(validation, repeated=repeated)
+                if repeated:
+                    run_service.add_event(
+                        run_id,
+                        "repair.strategy_changed",
+                        {"strategy": "replace_target_files", "gates": list(signature)},
+                    )
 
             run = self._guard(run_id, started_at)
+            self._activate_agent(run_id, "publishing", "github")
+            release_candidate = create_release_candidate(
+                run_id=run_id,
+                task=run["task"],
+                paths=sorted(changed_paths),
+                validation=validation,
+                summary=summary,
+            )
+            run_service.add_event(
+                run_id,
+                "release_candidate.created",
+                release_candidate,
+            )
             publish_result: dict[str, str] = {}
             if run["publish"]:
-                self._activate_agent(run_id, "publishing", "github")
                 validation_summary = "\n".join(
                     f"- {check['name']}: {'OK' if check['success'] else 'FEHLER'}"
                     for check in validation["checks"]
@@ -423,6 +671,8 @@ class AutonomousRunEngine:
                 "summary": summary,
                 "files": sorted(changed_paths),
                 "validation": validation,
+                "blueprint": blueprint_payload,
+                "release_candidate": release_candidate,
                 "publish": publish_result or None,
             }
             run_service.update(run_id, result=result)

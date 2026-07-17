@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, pool
 
 from backend.app.database.database import Base
 from backend.app.models.run import AgentRun, RunCheckpoint, RunEvent  # noqa: F401
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -23,7 +24,7 @@ from backend.app.models.run import (
     RunCheckpoint,
     RunEvent,
 )
-from backend.app.models.project import Project, ProjectTask
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask
 from backend.app.models.mission import (
     IntegrationRequirement,
     MissionPlan,
@@ -60,6 +61,7 @@ def clean_runs():
         db.execute(delete(MissionPlanTask))
         db.execute(delete(MissionPlan))
         db.execute(delete(IntegrationRequirement))
+        db.execute(delete(ProjectArtifact))
         db.execute(delete(ProjectTask))
         db.execute(delete(Project))
         db.execute(delete(AgentMemoryEntry))
@@ -215,10 +217,17 @@ def test_specialized_executor_persists_structured_result(tmp_path: Path, monkeyp
         artifacts=[
             SpecializedArtifact(
                 title="Research Brief",
-                content="Belastbares Ergebnis mit klarer Annahme.",
+                content=(
+                    "Belastbares Rechercheergebnis mit klar getrennten Fakten, Annahmen, "
+                    "Quellenbezug, Entscheidungskontext und einem konkreten nächsten Schritt. "
+                    "Die Quelle wurde für diesen Test explizit angegeben und die Aussage bleibt "
+                    "auf den dokumentierten Bedarf begrenzt. BOSS kann das Ergebnis priorisieren."
+                ),
+                artifact_type="research_report",
             )
         ],
         next_actions=["Ergebnis durch BOSS priorisieren"],
+        sources=["https://example.test/source"],
     )
     monkeypatch.setattr(
         specialized_run_engine,
@@ -243,6 +252,97 @@ def test_specialized_executor_persists_structured_result(tmp_path: Path, monkeyp
         "agent": "atlas",
     }
     assert completed["result"]["artifacts"][0]["title"] == "Research Brief"
+
+
+def test_specialized_executor_rejects_missing_role_contract_artifacts():
+    output = SpecializedTaskOutput(
+        summary="Design ist angeblich fertig",
+        artifacts=[
+            SpecializedArtifact(
+                title="Lose Notiz",
+                content="Eine nicht umsetzbare Designnotiz.",
+                artifact_type="document",
+            )
+        ],
+    )
+
+    validation = specialized_run_engine._validate_result("design", output)
+
+    assert validation["success"] is False
+    failed = {
+        item["name"] for item in validation["checks"] if not item["success"]
+    }
+    assert failed == {
+        "minimum-artifacts",
+        "required-artifact-types",
+        "artifact-substance",
+        "contract-semantics",
+    }
+
+
+def test_specialized_executor_normalizes_one_substantive_generic_artifact():
+    output = SpecializedTaskOutput(
+        summary="Lokaler Markt wurde mit nachvollziehbarer Methode untersucht.",
+        findings=["Öffentliche Brancheneinträge wurden getrennt von Annahmen bewertet."],
+        artifacts=[
+            SpecializedArtifact(
+                title="Research Brief",
+                content=(
+                    "Die Recherche dokumentiert Datenquelle, Methode, Bedarfssignale, "
+                    "Einschränkungen und die nächste manuelle Prüfung. Jeder Eintrag besitzt "
+                    "eine öffentliche Quelladresse. Ein fehlender Website-Link wird ausdrücklich "
+                    "nur als Signal und nicht als Beweis gewertet. Vor einer Kontaktaufnahme "
+                    "müssen Website und geschäftliche E-Mail erneut verifiziert werden."
+                ),
+                artifact_type="document",
+            )
+        ],
+        sources=["https://www.openstreetmap.org/node/1"],
+    )
+
+    normalized = specialized_run_engine._canonicalize_artifact_types(
+        "research", output
+    )
+
+    assert normalized.artifacts[0].artifact_type == "research_report"
+    assert specialized_run_engine._validate_result("research", normalized)["success"]
+
+
+def test_atlas_uses_real_overpass_tool_for_local_lead_research(monkeypatch):
+    lead = SalesLead(
+        id="lead-1",
+        name="Heidelberger Beispielbetrieb",
+        city="Heidelberg",
+        source_url="https://www.openstreetmap.org/node/1",
+        website_score=0,
+        opportunity_score=75,
+        reasons=["Keine Website im öffentlichen Brancheneintrag hinterlegt"],
+    )
+    monkeypatch.setattr(
+        "backend.app.services.specialized_run_engine.OverpassLeadResearcher.find",
+        lambda self, city, limit: [lead],
+    )
+
+    result, tool = specialized_run_engine._execute_task(
+        "research",
+        "Priorisiere Unternehmen in Heidelberg mit fehlender Website für das CRM.",
+        "atlas",
+    )
+
+    assert tool == "openstreetmap.overpass"
+    assert result.artifacts[0].artifact_type == "research_report"
+    assert result.sources == [lead.source_url]
+    assert specialized_run_engine._validate_result("research", result)["success"]
+
+
+def test_task_schema_constrains_artifact_type_for_ollama():
+    schema = specialized_run_engine._output_schema("research")
+    artifact_type = schema["$defs"]["SpecializedArtifact"]["properties"][
+        "artifact_type"
+    ]
+
+    assert artifact_type["enum"] == ["research_report"]
+    assert "default" not in artifact_type
 
 
 def test_website_sales_pipeline_researches_scores_logs_and_drafts_without_sending():
@@ -400,9 +500,11 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
     tmp_path: Path, monkeypatch
 ):
     captured = {}
+    sent = threading.Event()
 
     def fake_send(payload):
         captured.update(payload)
+        sent.set()
         return {
             "status": "project_created",
             "project_id": "project-from-n8n",
@@ -411,6 +513,13 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
         }
 
     monkeypatch.setattr(operations_router, "_send_to_n8n", fake_send)
+    monkeypatch.setattr(
+        operations_router,
+        "_dispatch_website_mission",
+        lambda project_id, _task, payload: fake_send(
+            {**payload, "project_id": project_id}
+        ),
+    )
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/operations/intake",
@@ -422,7 +531,11 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
 
     assert response.status_code == 202
     assert response.json()["route"]["workflow"] == "website_sales"
-    assert response.json()["project_id"] == "project-from-n8n"
+    assert response.json()["status"] == "project_created"
+    assert response.json()["phase"] == "planning"
+    assert response.json()["project_id"] != "project-from-n8n"
+    assert sent.wait(2)
+    assert captured["project_id"] == response.json()["project_id"]
     assert captured["max_leads"] == 20
     assert captured["offer_min"] == 200
     assert captured["offer_max"] == 500
@@ -432,13 +545,23 @@ def test_operations_router_sends_website_sales_to_n8n_with_saved_profile(
     assert "cineastisch" in captured["animation_style"]
 
 
-def test_operations_intake_explains_n8n_timeout_without_suggesting_resubmit(
+def test_operations_intake_accepts_project_while_n8n_times_out_in_background(
     tmp_path: Path, monkeypatch
 ):
+    attempted = threading.Event()
+
     def timeout(_payload):
+        attempted.set()
         raise requests.ReadTimeout("n8n is still processing")
 
     monkeypatch.setattr(operations_router, "_send_to_n8n", timeout)
+    def dispatch(_project_id, _task, payload):
+        try:
+            timeout(payload)
+        except requests.ReadTimeout:
+            pass
+
+    monkeypatch.setattr(operations_router, "_dispatch_website_mission", dispatch)
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/operations/intake",
@@ -448,9 +571,12 @@ def test_operations_intake_explains_n8n_timeout_without_suggesting_resubmit(
             },
         )
 
-    assert response.status_code == 504
-    assert "Projektboard prüfen" in response.json()["detail"]
-    assert "erneut absendest" in response.json()["detail"]
+    assert response.status_code == 202
+    assert response.json()["status"] == "project_created"
+    assert attempted.wait(2)
+    with TestClient(app) as client:
+        project = client.get(f"/api/v1/projects/{response.json()['project_id']}")
+    assert project.status_code == 200
 
 
 def test_operations_router_keeps_mission_control_changes_on_coding_engine(
@@ -504,12 +630,12 @@ def test_operations_router_collects_context_for_unknown_business_mission(
     }
 
 
-def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
+def test_business_workflow_combines_intake_crm_gmail_and_delivery():
     workflow_path = (
         Path(__file__).resolve().parents[2]
         / "n8n"
         / "workflows"
-        / "website-sales-heidelberg.json"
+        / "mission-control-business-automation.json"
     )
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     nodes = {node["name"]: node for node in workflow["nodes"]}
@@ -521,9 +647,11 @@ def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
     assert "Starterangebot" in normalize
     assert sheets["type"] == "n8n-nodes-base.googleSheets"
     assert sheets["parameters"]["sheetName"]["value"] == "Aktivitäten"
-    assert workflow["connections"]["Approve & Materialize Tasks"]["main"][0][0][
-        "node"
-    ] == "Log Mission in Google Sheets CRM"
+    assert workflow["name"] == "Mission Control – Business Automation"
+    assert "Approve & Materialize Tasks" not in nodes
+    assert nodes["Create Gmail Draft"]["type"] == "n8n-nodes-base.gmail"
+    assert nodes["Project Delivery Webhook"]["type"] == "n8n-nodes-base.webhook"
+    assert workflow["connections"]["Requirements Complete?"]["main"][0][0]["node"] == "Log Mission in Google Sheets CRM"
     assert workflow["connections"]["Log Mission in Google Sheets CRM"]["main"][0][
         0
     ]["node"] == "Return Mission Started"
@@ -533,6 +661,30 @@ def test_website_sales_workflow_uses_safe_defaults_and_google_crm():
     response_body = nodes["Return Mission Started"]["parameters"]["responseBody"]
     assert "status: 'project_created'" in response_body
     assert "research_status: 'queued'" in response_body
+
+
+def test_business_workflow_reuses_project_drive_hierarchy_and_routes_files():
+    workflow_path = (
+        Path(__file__).resolve().parents[2]
+        / "n8n"
+        / "workflows"
+        / "mission-control-business-automation.json"
+    )
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    nodes = {node["name"]: node for node in workflow["nodes"]}
+
+    for folder in ("Project", "CRM & Leads", "Websites & Angebote", "Berichte & Ergebnisse"):
+        assert nodes[f"Search {folder} Folder"]["type"] == "n8n-nodes-base.googleDrive"
+        assert nodes[f"Create {folder} Folder"]["type"] == "n8n-nodes-base.googleDrive"
+    assert nodes["Copy CRM Sheet to Project"]["parameters"]["operation"] == "copy"
+    assert nodes["Copy CRM Sheet to Project"]["parameters"]["folderId"]["value"] == "={{ $json.folders.crm }}"
+    assert nodes["Upload Routed Artifacts"]["parameters"][
+        "inputDataFieldName"
+    ] == "data"
+    assert nodes["Log Delivery in Google Sheets"]["parameters"]["sheetName"][
+        "value"
+    ] == "Aktivitäten"
+    assert workflow["connections"]["Log Delivery in Google Sheets"]["main"][0][0]["node"] == "Return Delivery Result"
 
 
 def test_project_portfolio_persists_tasks_and_agent_assignments(
@@ -620,6 +772,117 @@ def test_coding_project_task_starts_run_and_tracks_completion(
         refreshed = client.get(f"/api/v1/projects/{project['id']}").json()
         assert refreshed["progress"] == 100
         assert refreshed["tasks"][0]["status"] == "completed"
+
+
+def test_completed_project_files_are_archived_and_previewed(
+    tmp_path: Path, monkeypatch
+):
+    workspace = tmp_path / "workspace"
+    website = workspace / "projects" / "demo"
+    website.mkdir(parents=True)
+    (website / "index.html").write_text(
+        '<!doctype html><link rel="stylesheet" href="style.css"><h1>Demo</h1>',
+        encoding="utf-8",
+    )
+    (website / "style.css").write_text("h1 { color: teal; }", encoding="utf-8")
+    monkeypatch.setenv("MISSION_CONTROL_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.delenv("N8N_PROJECT_DELIVERY_WEBHOOK_URL", raising=False)
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Website Demo", "workspace": str(workspace)},
+        ).json()
+        task = client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={
+                "title": "Website-Entwurf bauen",
+                "task_type": "coding",
+                "assigned_agent": "forge",
+            },
+        ).json()
+        started = client.post(f"/api/v1/project-tasks/{task['id']}/run", json={})
+        run_id = started.json()["run"]["id"]
+        run_service.update(
+            run_id,
+            result={
+                "summary": "Lieferbarer Website-Entwurf erstellt.",
+                "files": [
+                    "projects/demo/index.html",
+                    "projects/demo/style.css",
+                ],
+            },
+        )
+        run_service.transition(run_id, "completed")
+
+        refreshed = client.get(f"/api/v1/projects/{project['id']}")
+        assert refreshed.status_code == 200
+        artifacts = refreshed.json()["artifacts"]
+        website_artifact = next(item for item in artifacts if item["artifact_type"] == "website")
+        report = next(item for item in artifacts if item["artifact_type"] == "report")
+        assert website_artifact["preview_available"] is True
+        assert report["preview_available"] is True
+        assert len(artifacts) == 4
+
+        preview = client.get(
+            f"/api/v1/project-artifacts/{website_artifact['id']}/preview"
+        )
+        assert preview.status_code == 200
+        assert "Demo" in preview.text
+        assert "connect-src 'none'" in preview.headers["content-security-policy"]
+        assert "http://127.0.0.1:5173" in preview.headers["content-security-policy"]
+        stylesheet = client.get(
+            f"/api/v1/project-artifacts/{website_artifact['id']}/preview/style.css"
+        )
+        assert stylesheet.status_code == 200
+        assert "color: teal" in stylesheet.text
+
+        download = client.get(f"/api/v1/project-artifacts/{report['id']}/content")
+        assert download.status_code == 200
+        assert download.json()["project"]["id"] == project["id"]
+
+        report_preview = client.get(f"/api/v1/project-artifacts/{report['id']}/preview")
+        assert report_preview.status_code == 200
+        assert report_preview.json()["project"]["id"] == project["id"]
+
+        sync = client.post(f"/api/v1/projects/{project['id']}/artifacts/sync")
+        assert sync.status_code == 202
+        assert sync.json()["status"] == "unchanged"
+
+
+def test_project_can_be_archived_and_restored_with_active_run_cancelled(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(run_service, "start", lambda run_id: None)
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/v1/projects",
+            json={"name": "Fehlerhaftes Projekt", "workspace": str(tmp_path)},
+        ).json()
+        task = client.post(
+            f"/api/v1/projects/{project['id']}/tasks",
+            json={
+                "title": "Fehler analysieren",
+                "task_type": "coding",
+                "assigned_agent": "forge",
+            },
+        ).json()
+        started = client.post(f"/api/v1/project-tasks/{task['id']}/run", json={})
+        run_id = started.json()["run"]["id"]
+
+        archived = client.post(f"/api/v1/projects/{project['id']}/archive")
+        assert archived.status_code == 200
+        assert archived.json()["status"] == "archived"
+        assert archived.json()["autopilot_enabled"] is False
+        assert archived.json()["tasks"][0]["status"] == "cancelled"
+        cancelled_run = run_service.get(run_id)
+        assert cancelled_run is not None
+        assert cancelled_run["cancel_requested"] is True
+
+        restored = client.post(f"/api/v1/projects/{project['id']}/restore")
+        assert restored.status_code == 200
+        assert restored.json()["status"] == "paused"
 
 
 def test_workspace_rejects_parent_and_symlink_escape(tmp_path: Path):
@@ -955,7 +1218,7 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "done",
             "edits": [
@@ -974,6 +1237,16 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr(
         run_engine_module,
+        "validate_product_quality",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
         "review_changes",
         lambda workspace, paths: {"approved": True, "issues": []},
     )
@@ -987,6 +1260,11 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
     assert sandbox_file.read_text(encoding="utf-8") == "hello world"
     assert (tmp_path / "generated.txt").read_text(encoding="utf-8") == "hello"
     assert completed["result"]["files"] == ["generated.txt"]
+    assert completed["result"]["blueprint"]["artifact_type"] == "technical_blueprint"
+    assert completed["result"]["release_candidate"]["status"] == "ready"
+    event_types = {event["type"] for event in run_service.events(run["id"])}
+    assert "blueprint.created" in event_types
+    assert "release_candidate.created" in event_types
     agent_events = [
         event for event in run_service.events(run["id"]) if event["type"].startswith("agent.")
     ]
@@ -995,7 +1273,7 @@ def test_autonomous_engine_completes_with_mocked_model(tmp_path: Path, monkeypat
         and event["payload"] == {"from": "boss", "to": "forge_planner"}
         for event in agent_events
     )
-    assert agent_events[-1]["payload"] == {"agent": "forge_reviewer"}
+    assert agent_events[-1]["payload"] == {"agent": "forge_publisher"}
     assert all(
         delegation["status"] == "completed"
         for delegation in agent_team.delegations(run["id"])
@@ -1030,18 +1308,311 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "created",
             "files": [],
             "edits": [
                 {
-                    "path": "projects/demo/index.html",
+                    "path": "projects/demo/src/BrandMark.tsx",
                     "search": "missing file",
-                    "replacement": "<h1>Demo</h1>",
+                    "replacement": "export const BrandMark = () => <strong>Demo</strong>",
                 }
             ],
         },
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_project",
+        lambda workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_quality",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None
+    assert completed["status"] == "completed"
+    assert completed["repair_attempts"] == 0
+    generated = Path(completed["workspace"]) / "projects/demo/src/BrandMark.tsx"
+    assert generated.read_text(encoding="utf-8") == (
+        "export const BrandMark = () => <strong>Demo</strong>"
+    )
+    assert "projects/demo/src/BrandMark.tsx" in completed["result"]["files"]
+    assert "projects/demo/package.json" in completed["result"]["files"]
+    event_types = {event["type"] for event in run_service.events(run["id"])}
+    assert "product.scaffold.created" in event_types
+
+
+def test_creation_mode_protects_deterministic_scaffold_files(tmp_path: Path):
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+
+    with pytest.raises(ValueError, match="deterministischen Startergerüst"):
+        run_engine_module.run_engine._creation_files(
+            plan,
+            str(tmp_path),
+            {
+                "files": [
+                    {"path": "projects/demo/package.json", "content": "{}"}
+                ],
+                "edits": [],
+            },
+        )
+
+    with pytest.raises(ValueError, match="deterministischen Startergerüst"):
+        run_engine_module.run_engine._creation_files(
+            plan,
+            str(tmp_path),
+            {
+                "files": [
+                    {"path": "projects/demo/src/App.tsx", "content": "bad"}
+                ],
+                "edits": [],
+            },
+        )
+
+
+def test_creation_mode_ignores_redundant_edit_after_full_file_replacement(
+    tmp_path: Path,
+):
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+    app = tmp_path / "projects/demo/src/content.ts"
+    app.parent.mkdir(parents=True)
+    app.write_text("old", encoding="utf-8")
+    coder_result = {
+        "files": [{"path": "projects/demo/src/content.ts", "content": "new"}],
+        "edits": [
+            {
+                "path": "projects/demo/src/content.ts",
+                "search": "model hallucinated search",
+                "replacement": "ignored",
+            }
+        ],
+    }
+
+    assert run_engine_module.run_engine._creation_edits(
+        plan, str(tmp_path), coder_result
+    ) == []
+
+    unrelated_edit = {
+        "files": [{"path": "projects/demo/src/content.ts", "content": "new"}],
+        "edits": [
+            {
+                "path": "projects/demo/src/theme.css",
+                "search": "model hallucinated search",
+                "replacement": "ignored in full replacement mode",
+            }
+        ],
+    }
+    assert run_engine_module.run_engine._creation_edits(
+        plan,
+        str(tmp_path),
+        unrelated_edit,
+        full_replacement=True,
+    ) == []
+
+
+def test_creation_mode_applies_repair_edits_before_full_validation(
+    tmp_path: Path, monkeypatch
+):
+    run = run_service.create(
+        task="Create and repair a website prototype",
+        workspace=str(tmp_path),
+        max_repair_attempts=2,
+        start=False,
+    )
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+    monkeypatch.setattr(
+        run_engine_module, "create_execution_plan", lambda task, workspace: plan
+    )
+    calls = {"generate": 0, "repository": 0}
+
+    def generate(plan, workspace, feedback, blueprint=None):
+        calls["generate"] += 1
+        if calls["generate"] == 1:
+            return {
+                "status": "completed",
+                "summary": "initial",
+                "files": [
+                    {
+                        "path": "projects/demo/src/theme.css",
+                        "content": "body { color: black; }",
+                    }
+                ],
+            }
+        assert "product-reduced-motion" in feedback
+        assert "pytest" not in feedback
+        return {
+            "status": "completed",
+            "summary": "repaired",
+            "edits": [
+                {
+                    "path": "projects/demo/src/theme.css",
+                    "search": "body { color: black; }",
+                    "replacement": (
+                        "body { color: black; }\n"
+                        "@media (prefers-reduced-motion: reduce) { * { animation: none; } }"
+                    ),
+                }
+            ],
+        }
+
+    def product_quality(plan, workspace):
+        css = Path(workspace, "projects/demo/src/theme.css").read_text(
+            encoding="utf-8"
+        )
+        success = "prefers-reduced-motion" in css
+        return {
+            "success": success,
+            "checks": [
+                {
+                    "name": "product-reduced-motion",
+                    "success": success,
+                    "output": "Reduced motion fehlt" if not success else "OK",
+                    "failure_class": None if success else "code",
+                }
+            ],
+        }
+
+    def repository_validation(workspace):
+        calls["repository"] += 1
+        return {"success": True, "checks": []}
+
+    monkeypatch.setattr(run_engine_module, "execute_plan", generate)
+    monkeypatch.setattr(run_engine_module, "validate_product_quality", product_quality)
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
+    )
+    monkeypatch.setattr(run_engine_module, "validate_project", repository_validation)
+    monkeypatch.setattr(
+        run_engine_module,
+        "review_changes",
+        lambda workspace, paths: {"approved": True, "issues": []},
+    )
+
+    run_engine_module.run_engine.execute(run["id"])
+
+    completed = run_service.get(run["id"])
+    assert completed is not None and completed["status"] == "completed"
+    assert completed["repair_attempts"] == 1
+    assert calls == {"generate": 2, "repository": 1}
+    repaired = Path(completed["workspace"], "projects/demo/src/theme.css")
+    assert "prefers-reduced-motion" in repaired.read_text(encoding="utf-8")
+
+
+def test_patch_failure_keeps_last_gate_feedback_for_full_replacement(
+    tmp_path: Path, monkeypatch
+):
+    run = run_service.create(
+        task="Repair a generated website safely",
+        workspace=str(tmp_path),
+        max_repair_attempts=3,
+        start=False,
+    )
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+    monkeypatch.setattr(
+        run_engine_module, "create_execution_plan", lambda task, workspace: plan
+    )
+    calls = {"generate": 0}
+
+    def generate(plan, workspace, feedback, blueprint=None):
+        calls["generate"] += 1
+        path = "projects/demo/src/theme.css"
+        if calls["generate"] == 1:
+            return {
+                "status": "completed",
+                "summary": "initial",
+                "files": [{"path": path, "content": "body { color: black; }"}],
+            }
+        if calls["generate"] == 2:
+            assert "product-reduced-motion" in feedback
+            return {
+                "status": "completed",
+                "summary": "ambiguous repair",
+                "edits": [
+                    {"path": path, "search": "missing", "replacement": "fixed"}
+                ],
+            }
+        assert "patch-application" in feedback
+        assert "product-reduced-motion" in feedback
+        assert "STRATEGIEWECHSEL" in feedback
+        return {
+            "status": "completed",
+            "summary": "full replacement",
+            "files": [
+                {
+                    "path": path,
+                    "content": (
+                        "body { color: black; }\n"
+                        "@media (prefers-reduced-motion: reduce) { * { animation: none; } }"
+                    ),
+                }
+            ],
+        }
+
+    def product_quality(plan, workspace):
+        css = Path(workspace, "projects/demo/src/theme.css").read_text(
+            encoding="utf-8"
+        )
+        success = "prefers-reduced-motion" in css
+        return {
+            "success": success,
+            "checks": [
+                {
+                    "name": "product-reduced-motion",
+                    "success": success,
+                    "output": "Reduced motion fehlt" if not success else "OK",
+                    "failure_class": None if success else "code",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(run_engine_module, "execute_plan", generate)
+    monkeypatch.setattr(run_engine_module, "validate_product_quality", product_quality)
+    monkeypatch.setattr(
+        run_engine_module,
+        "validate_product_build",
+        lambda plan, workspace: {"success": True, "checks": []},
     )
     monkeypatch.setattr(
         run_engine_module,
@@ -1057,12 +1628,13 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
     run_engine_module.run_engine.execute(run["id"])
 
     completed = run_service.get(run["id"])
-    assert completed is not None
-    assert completed["status"] == "completed"
-    assert completed["repair_attempts"] == 0
-    generated = Path(completed["workspace"]) / "projects/demo/index.html"
-    assert generated.read_text(encoding="utf-8") == "<h1>Demo</h1>"
-    assert completed["result"]["files"] == ["projects/demo/index.html"]
+    assert completed is not None and completed["status"] == "completed"
+    assert completed["repair_attempts"] == 2
+    assert calls["generate"] == 3
+    assert any(
+        event["type"] == "repair.strategy_changed"
+        for event in run_service.events(run["id"])
+    )
 
 
 def test_validator_resolves_homebrew_npm_for_autostart_processes(
@@ -1096,7 +1668,7 @@ def test_engine_does_not_spend_repairs_on_validation_infrastructure(
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "changed",
             "files": [{"path": "existing.txt", "content": "changed"}],
@@ -1140,7 +1712,7 @@ def test_engine_rolls_back_after_validation_failure(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(
         run_engine_module,
         "execute_plan",
-        lambda plan, workspace, feedback: {
+        lambda plan, workspace, feedback, blueprint=None: {
             "status": "completed",
             "summary": "bad",
             "files": [{"path": "existing.txt", "content": "broken"}],
@@ -1173,7 +1745,7 @@ def test_engine_retries_ambiguous_patch(tmp_path: Path, monkeypatch):
     )
     calls = {"count": 0}
 
-    def generate(plan, workspace, feedback):
+    def generate(plan, workspace, feedback, blueprint=None):
         calls["count"] += 1
         search = "value = 1" if calls["count"] == 1 else "value = 1\nvalue = 1"
         return {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import urllib.request
 from typing import Any
 
@@ -84,16 +85,19 @@ INTEGRATIONS: list[dict[str, Any]] = [
             ["GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID"],
             ["GOOGLE_SHEETS_CRM_SPREADSHEET_ID"],
             ["N8N_GOOGLE_SHEETS_CREDENTIAL_ID"],
+            ["N8N_GOOGLE_DRIVE_CREDENTIAL_ID"],
         ],
         "configurable_keys": [
             "GOOGLE_DRIVE_AI_PLATFORM_FOLDER_ID",
             "GOOGLE_SHEETS_CRM_SPREADSHEET_ID",
             "N8N_GOOGLE_SHEETS_CREDENTIAL_ID",
+            "N8N_GOOGLE_DRIVE_CREDENTIAL_ID",
+            "N8N_PROJECT_DELIVERY_WEBHOOK_URL",
         ],
         "setup_steps": [
             "Google Drive und das CRM-Sheet im gewünschten Konto anlegen.",
-            "Google-Sheets-OAuth in n8n verbinden.",
-            "Die n8n-Credential-ID lokal konfigurieren und den Verbindungstest ausführen.",
+            "Google Sheets und Google Drive OAuth in n8n verbinden.",
+            "Beide n8n-Credential-IDs sowie den Delivery-Webhook lokal konfigurieren.",
         ],
     },
     {
@@ -110,6 +114,111 @@ INTEGRATIONS: list[dict[str, Any]] = [
             "PayPal Developer App zunächst im Sandbox-Modus erstellen.",
             "PAYPAL_CLIENT_ID und PAYPAL_CLIENT_SECRET lokal konfigurieren.",
             "Erst nach Tests und rechtlicher Prüfung auf Live umstellen.",
+        ],
+    },
+    {
+        "id": "google_calendar",
+        "name": "Google Calendar",
+        "category": "communication",
+        "description": "Terminabgleich, Event-Entwürfe und freigabepflichtige Einladungen.",
+        "owner_agent": "flow",
+        "account_required": True,
+        "cost": "Im vorhandenen Google-Konto kostenlos",
+        "secret_groups": [["N8N_GOOGLE_CALENDAR_CREDENTIAL_ID"]],
+        "configurable_keys": [
+            "N8N_GOOGLE_CALENDAR_CREDENTIAL_ID",
+            "N8N_CALENDAR_WEBHOOK_URL",
+            "GOOGLE_CALENDAR_ID",
+        ],
+        "setup_steps": [
+            "Google Calendar API im vorhandenen Google-Cloud-Projekt aktivieren.",
+            "Eine separate Google-Calendar-OAuth-Credential in n8n verbinden.",
+            "Testevent ohne Gäste erstellen; Einladungen bleiben freigabepflichtig.",
+        ],
+    },
+    {
+        "id": "quality_llm",
+        "name": "Quality LLM",
+        "category": "ai",
+        "description": "Optionaler OpenAI-kompatibler Qualitätsanbieter mit Kostenlimit.",
+        "owner_agent": "sage",
+        "account_required": True,
+        "cost": "Standardlimit 20 € pro Monat",
+        "secret_groups": [["QUALITY_LLM_API_KEY"], ["QUALITY_LLM_BASE_URL"], ["QUALITY_LLM_MODEL"]],
+        "configurable_keys": [
+            "QUALITY_LLM_API_KEY",
+            "QUALITY_LLM_BASE_URL",
+            "QUALITY_LLM_MODEL",
+            "QUALITY_LLM_MONTHLY_LIMIT_CENTS",
+        ],
+        "setup_steps": [
+            "OpenAI-kompatiblen Anbieter auswählen und API-Key erzeugen.",
+            "Base-URL, Modell und maximales Monatsbudget konfigurieren.",
+            "Testaufruf ausführen; lokale Ausführung bleibt der Standard.",
+        ],
+    },
+    {
+        "id": "media_local",
+        "name": "Lokale Medien-Pipeline",
+        "category": "media",
+        "description": "FFmpeg-basierte Video-, Audio-, Untertitel- und Exportpipeline.",
+        "owner_agent": "aura",
+        "account_required": False,
+        "cost": "Kostenlos und lokal",
+        "secret_groups": [],
+        "configurable_keys": ["FFMPEG_PATH", "LOCAL_IMAGE_WEBHOOK_URL"],
+        "setup_steps": [
+            "FFmpeg lokal installieren.",
+            "Optional eine lokale Bildgenerierungs-Pipeline als Webhook verbinden.",
+            "Vertikale Exportprofile für Instagram und TikTok testen.",
+        ],
+    },
+    {
+        "id": "instagram",
+        "name": "Instagram Publishing",
+        "category": "social",
+        "description": "Freigabepflichtige Reels und Posts für ein professionelles Konto.",
+        "owner_agent": "flow",
+        "account_required": True,
+        "cost": "Plattformkonto kostenlos; Medienerzeugung separat",
+        "secret_groups": [["INSTAGRAM_ACCESS_TOKEN"], ["INSTAGRAM_ACCOUNT_ID"]],
+        "configurable_keys": ["INSTAGRAM_ACCESS_TOKEN", "INSTAGRAM_ACCOUNT_ID"],
+        "setup_steps": [
+            "Professionelles Instagram-Konto und Meta-App verbinden.",
+            "Publishing-Berechtigungen freigeben und Testupload durchführen.",
+            "Öffentliche Veröffentlichung nur nach Mission-Control-Freigabe erlauben.",
+        ],
+    },
+    {
+        "id": "tiktok",
+        "name": "TikTok Draft Upload",
+        "category": "social",
+        "description": "Freigabepflichtiger Upload in den TikTok-Entwurfsfluss.",
+        "owner_agent": "flow",
+        "account_required": True,
+        "cost": "TikTok-Developer-Konto kostenlos",
+        "secret_groups": [["TIKTOK_CLIENT_KEY"], ["TIKTOK_CLIENT_SECRET"]],
+        "configurable_keys": ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"],
+        "setup_steps": [
+            "TikTok-Developer-App und Content Upload API konfigurieren.",
+            "OAuth sowie video.upload-Berechtigung verbinden.",
+            "Zunächst ausschließlich Entwurfsuploads verwenden.",
+        ],
+    },
+    {
+        "id": "commerce_browser",
+        "name": "Kontrollierter Browser-Checkout",
+        "category": "commerce",
+        "description": "Produktsuche und Warenkorbvorbereitung; Kaufabschluss bleibt manuell.",
+        "owner_agent": "atlas",
+        "account_required": True,
+        "cost": "Keine zusätzliche Plattformgebühr",
+        "secret_groups": [],
+        "configurable_keys": [],
+        "setup_steps": [
+            "Bestehende Browsersitzung verwenden; keine Passwörter speichern.",
+            "Adresse, Zahlung und Gesamtpreis niemals in Agentenlogs übernehmen.",
+            "Checkout erst nach Stufe-3-Freigabe dem Nutzer übergeben.",
         ],
     },
 ]
@@ -149,6 +258,16 @@ def integration_status(integration: dict[str, Any]) -> dict[str, Any]:
                 detected = response.status == 200
         except Exception:
             detected = False
+    elif integration["id"] == "media_local":
+        configured_path = os.getenv("FFMPEG_PATH", "").strip()
+        detected = bool(
+            (configured_path and os.path.isfile(configured_path))
+            or shutil.which("ffmpeg")
+        )
+    elif integration["id"] == "commerce_browser":
+        # No credentials are stored. Readiness means that the controlled handoff
+        # workflow is available; login and checkout stay in the user's browser.
+        detected = True
 
     ready = detected or (complete and bool(groups))
     return {

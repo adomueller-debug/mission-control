@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 import requests
@@ -129,8 +130,25 @@ class OperationsRouter:
             payload = {**WEBSITE_SALES_PROFILE, **(answers or {}), "goal": task}
             # The current sales pilot never sends messages automatically.
             payload["outreach_approval"] = False
-            result = self._send_to_n8n(payload)
-            return {"route": route, **result}
+            project = project_service.create_project(
+                name=f"Website-Verkauf {payload.get('city', 'Heidelberg')}",
+                description="Autonom vorbereitete Vertriebs- und Liefermission.",
+                goal=task,
+                category="business",
+                status="planning",
+                workspace=workspace,
+                owner_agent="boss",
+                revenue_target_cents=int(float(payload.get("target_revenue", 500)) * 100),
+            )
+            self._dispatch_website_mission(project["id"], task, payload)
+            return {
+                "status": "project_created",
+                "phase": "planning",
+                "route": route,
+                "project_id": project["id"],
+                "task_count": 0,
+                "message": "Mission angenommen. BOSS plant und delegiert im Hintergrund.",
+            }
 
         missing = self._generic_questions(answers or {})
         if missing:
@@ -205,6 +223,37 @@ class OperationsRouter:
         if not isinstance(result, dict) or "status" not in result:
             raise ValueError("n8n hat keine gültige Missionsantwort geliefert.")
         return result
+
+    def _dispatch_website_mission(
+        self, project_id: str, task: str, payload: dict[str, Any]
+    ) -> None:
+        thread = threading.Thread(
+            target=self._prepare_website_mission,
+            args=(project_id, task, payload),
+            daemon=True,
+            name=f"website-mission-{project_id[:8]}",
+        )
+        thread.start()
+
+    def _prepare_website_mission(
+        self, project_id: str, task: str, payload: dict[str, Any]
+    ) -> None:
+        try:
+            plan = mission_router.create_plan(project_id, task)
+            approved = mission_router.approve(plan["id"])
+            self._send_to_n8n(
+                {
+                    **payload,
+                    "project_id": project_id,
+                    "mission_plan_id": approved["plan"]["id"],
+                    "task_count": len(approved["created_tasks"]),
+                    "mode": "mission_started",
+                }
+            )
+        except (OSError, ValueError, KeyError, requests.RequestException):
+            # The local project and BOSS plan remain authoritative. n8n can recover
+            # independently without turning an accepted mission into a UI error.
+            return
 
 
 operations_router = OperationsRouter()

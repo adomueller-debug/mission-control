@@ -16,6 +16,7 @@ import {
   FolderKanban,
   GitBranch,
   GitPullRequest,
+  Network,
   LayoutDashboard,
   Play,
   PlugZap,
@@ -35,6 +36,7 @@ import { ProjectPortfolioView } from "../components/projects/ProjectPortfolioVie
 import { IntegrationCenter } from "../components/integrations/IntegrationCenter";
 import { InternalWorkView } from "../components/internal/InternalWorkView";
 import { CommandCenterView } from "../components/overview/CommandCenterView";
+import { MissionControlV2 } from "../components/v2/MissionControlV2";
 import { useMissionControlSocket } from "../hooks/useMissionControlSocket";
 import {
   AGENT_STATUS_DOTS,
@@ -114,6 +116,20 @@ const badgeTone = {
   slate: "bg-slate-400/10 text-slate-300",
 };
 
+const stepActivity: Record<string, string> = {
+  planner: "Mission und Prioritäten strukturieren",
+  technical_planner: "Repository und Architektur analysieren",
+  coder: "Dateien implementieren und reparieren",
+  validator: "Produkt und Qualitätsgates prüfen",
+  reviewer: "Änderungen fachlich abnehmen",
+  github: "Release Candidate vorbereiten",
+  aura: "Designvertrag und Nutzerführung ausarbeiten",
+  atlas: "Quellen und Marktinformationen recherchieren",
+  flow: "Workflow und Integrationen ausführen",
+  sentinel: "Risiken, Datenschutz und Rechte prüfen",
+  orbit: "Kennzahlen und Datenstruktur ausarbeiten",
+};
+
 export default function MissionControl() {
   const {
     runs,
@@ -144,7 +160,7 @@ export default function MissionControl() {
   const [businessResult, setBusinessResult] = useState<OperationIntakeResponse | null>(null);
   const [projectToOpen, setProjectToOpen] = useState<string | null>(null);
   const [projectCreateRequest, setProjectCreateRequest] = useState(0);
-  const [view, setView] = useState<"overview" | "operations" | "internal" | "projects" | "integrations" | "team">("overview");
+  const [view, setView] = useState<"overview" | "missions" | "operations" | "internal" | "projects" | "integrations" | "team">("overview");
   const [runFilter, setRunFilter] = useState<"attention" | "active" | "history">("attention");
   const [pendingRunIds, setPendingRunIds] = useState<Set<string>>(new Set());
   const [dismissedRunIds, setDismissedRunIds] = useState<Set<string>>(() => {
@@ -283,6 +299,7 @@ export default function MissionControl() {
 
           <nav className="mt-10 space-y-1">
             <NavItem active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard size={17} />} label="Übersicht" />
+            <NavItem active={view === "missions"} onClick={() => setView("missions")} icon={<Network size={17} />} label="Missionen 2.0" />
             <NavItem active={view === "operations"} onClick={() => setView("operations")} icon={<Activity size={17} />} label="Operations" />
             <NavItem active={view === "internal"} onClick={() => setView("internal")} icon={<Wrench size={17} />} label="Intern" badge={runs.filter((run) => run.workstream === "internal" && !terminal.has(run.status)).length || undefined} />
             <NavItem active={view === "projects"} onClick={() => setView("projects")} icon={<FolderKanban size={17} />} label="Projekte" />
@@ -315,7 +332,7 @@ export default function MissionControl() {
             <div className="lg:hidden"><Brand version={health?.version} /></div>
             <div className="hidden lg:block">
               <p className="text-sm text-slate-500">Autonomous agent organization</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight">{view === "overview" ? "Command Center" : view === "operations" ? "Operations" : view === "internal" ? "Internal Operations" : view === "projects" ? "Project Portfolio" : view === "integrations" ? "Integration Center" : "Agent Network"}</h1>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight">{view === "overview" ? "Command Center" : view === "missions" ? "Mission Engine" : view === "operations" ? "Operations" : view === "internal" ? "Internal Operations" : view === "projects" ? "Project Portfolio" : view === "integrations" ? "Integration Center" : "Agent Network"}</h1>
             </div>
             <div className="mc-glass flex items-center gap-2 rounded-full px-3 py-2 text-xs text-slate-400">
               <span className={`h-1.5 w-1.5 rounded-full ${backendConnected ? "bg-emerald-400" : "bg-rose-400"}`} />
@@ -328,6 +345,7 @@ export default function MissionControl() {
 
           <div className="mt-5 grid grid-cols-3 gap-2 lg:hidden">
             <NavItem active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard size={16} />} label="Übersicht" />
+            <NavItem active={view === "missions"} onClick={() => setView("missions")} icon={<Network size={16} />} label="Missionen" />
             <NavItem active={view === "operations"} onClick={() => setView("operations")} icon={<Activity size={16} />} label="Operations" />
             <NavItem active={view === "internal"} onClick={() => setView("internal")} icon={<Wrench size={16} />} label="Intern" />
             <NavItem active={view === "projects"} onClick={() => setView("projects")} icon={<FolderKanban size={16} />} label="Projekte" />
@@ -351,6 +369,8 @@ export default function MissionControl() {
               }}
               onIntegrations={() => setView("integrations")}
             />
+          ) : view === "missions" ? (
+            <MissionControlV2 />
           ) : view === "team" ? (
             <AgentTeamView agents={agents} />
           ) : view === "internal" ? (
@@ -432,8 +452,8 @@ export default function MissionControl() {
                 <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.035] p-4">
                   <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-300/10 text-emerald-300"><BriefcaseBusiness size={16} /></div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-emerald-100">Business-Mission geplant</p>
-                    <p className="mt-1 text-[11px] text-slate-500">BOSS hat {businessResult.task_count ?? 0} Aufgaben delegiert. Externe E-Mails bleiben Entwürfe.</p>
+                    <p className="text-sm font-medium text-emerald-100">Mission angenommen</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{businessResult.phase === "planning" ? "BOSS plant und delegiert jetzt automatisch im Hintergrund." : `BOSS hat ${businessResult.task_count ?? 0} Aufgaben delegiert.`} Externe E-Mails bleiben Entwürfe.</p>
                   </div>
                   <button type="button" onClick={() => setView("projects")} className="mc-button-primary mc-arrow-action flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold">
                     Projekt öffnen <ArrowRight size={13} />
@@ -606,7 +626,8 @@ function OperationsLiveStrip({ runs, agents, onOpen }: { runs: AgentRun[]; agent
       <div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${runs.length ? "animate-pulse bg-cyan-300" : "bg-emerald-400"}`} /><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Live Agent Operations</p><span className="ml-auto text-[10px] text-slate-600">{runs.length ? `${runs.length} aktiv` : "Bereit"}</span></div>
       {runs.length ? <div className="mt-3 grid gap-2 lg:grid-cols-2">{runs.slice(0, 4).map((run) => {
         const agent = agents.find((item) => item.id === run.current_step || item.legacy_ids.includes(run.current_step ?? ""));
-        return <button key={run.id} onClick={() => onOpen(run.id)} className="mc-arrow-action flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2.5 text-left hover:border-cyan-300/15"><AgentGlyph id={agent?.id ?? "boss"} color={agent?.color ?? "#67e8f9"} size="sm" active /><span className="min-w-0 flex-1"><span className="block text-[10px] font-semibold uppercase tracking-wider text-cyan-300/70">{agent?.name ?? "BOSS"} · {statusLabel[run.status]}</span><span className="mt-0.5 block truncate text-xs text-slate-300">{missionTitle(run.task)}</span></span><ChevronRight size={13} className="text-slate-600" /></button>;
+        const activity = stepActivity[run.current_step ?? ""] ?? statusLabel[run.status];
+        return <button key={run.id} onClick={() => onOpen(run.id)} className="mc-arrow-action flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2.5 text-left hover:border-cyan-300/15"><AgentGlyph id={agent?.id ?? "boss"} color={agent?.color ?? "#67e8f9"} size="sm" active /><span className="min-w-0 flex-1"><span className="block text-[10px] font-semibold uppercase tracking-wider text-cyan-300/70">{agent?.name ?? "BOSS"} · {activity}</span><span className="mt-0.5 block truncate text-xs text-slate-300">{missionTitle(run.task)}</span></span><span className="hidden rounded-md bg-cyan-300/[0.06] px-2 py-1 text-[9px] text-cyan-200/60 sm:block">LIVE</span><ChevronRight size={13} className="text-slate-600" /></button>;
       })}</div> : <p className="mt-2 text-xs text-slate-600">Kein Agent arbeitet gerade. Du kannst direkt eine neue Mission starten.</p>}
     </section>
   );
@@ -776,14 +797,72 @@ function RunWorkspace({ run, agents, events, onCancel, onResume, onDismiss }: { 
         </div>
 
         <aside className="border-t border-white/[0.07] p-5 lg:border-l lg:border-t-0">
-          <SectionTitle icon={<TerminalSquare size={15} />} title="Live Activity" />
-          <div className="mt-4 max-h-[610px] space-y-1 overflow-auto">
+          <LiveActivityWindow run={run} agents={agents} events={events} />
+          <div className="mt-5 flex items-center justify-between"><SectionTitle icon={<TerminalSquare size={15} />} title="Ereignisstrom" /><span className="text-[10px] text-slate-700">{events.length} Events</span></div>
+          <div className="mt-2 max-h-[360px] space-y-1 overflow-auto">
             {events.map((event) => <EventItem key={event.id} event={event} />)}
             {events.length === 0 && <EmptyState text="Noch keine Aktivität." />}
           </div>
         </aside>
       </div>
     </div>
+  );
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function activityPreview(event: RunEvent): { title: string; detail: string } {
+  const payload = recordValue(event.payload);
+  const result = recordValue(payload.result);
+  const agent = typeof payload.agent === "string" ? payload.agent.toUpperCase() : "Agent";
+  const tool = typeof payload.tool === "string" ? payload.tool : "";
+  if (event.type === "validation.phase") return { title: String(payload.label ?? "Qualitätsprüfung"), detail: `Phase · ${String(payload.phase ?? "validation")}` };
+  if (event.type === "repair.strategy_changed") return { title: "Reparaturstrategie gewechselt", detail: "Betroffene Dateien werden jetzt vollständig ersetzt" };
+  if (event.type === "repair.started") return { title: `Reparaturrunde ${String(payload.attempt ?? "")}`, detail: "BUILDER verarbeitet nur die roten Gates" };
+  if (event.type === "blueprint.created") return { title: "Technischer Bauplan freigegeben", detail: "Dateiplan, Risiken und Tests stehen fest" };
+  if (event.type === "release_candidate.created") return { title: "Release Candidate erstellt", detail: "SHIPWRIGHT bereitet die Übergabe vor" };
+  if (event.type === "agent.started") return { title: `${agent} hat übernommen`, detail: "Arbeitsauftrag und Kontext wurden geladen" };
+  if (event.type === "agent.handoff") return { title: `Übergabe an ${String(payload.to ?? "nächsten Agenten").toUpperCase()}`, detail: `${String(payload.from ?? "Agent").toUpperCase()} hat seinen Schritt abgeschlossen` };
+  if (tool === "ollama.generate") return { title: "Modell erzeugt Arbeitsstand", detail: "Strukturierte Ausgabe wird angewendet" };
+  if (tool === "write_file" || tool === "apply_edit") return { title: tool === "write_file" ? "Datei geschrieben" : "Reparatur angewendet", detail: String(result.path ?? "Produktdatei aktualisiert") };
+  if (tool === "validate_project") {
+    const checks = Array.isArray(result.checks) ? result.checks.map(recordValue) : [];
+    const failed = checks.filter((check) => check.success === false).length;
+    return { title: failed ? `${failed} Qualitätsgates noch rot` : "Alle Qualitätsgates grün", detail: failed ? "Automatische Reparatur wird vorbereitet" : "Bereit für Review und Release" };
+  }
+  if (event.type === "run.error") return { title: "Run sicher gestoppt", detail: String(payload.message ?? "Fehlerdetails verfügbar") };
+  return { title: event.type.replaceAll(".", " "), detail: new Date(event.created_at).toLocaleTimeString("de-DE") };
+}
+
+function LiveActivityWindow({ run, agents, events }: { run: AgentRun; agents: AgentProfile[]; events: RunEvent[] }) {
+  const agent = agents.find((item) => item.id === run.current_step || item.legacy_ids.includes(run.current_step ?? ""));
+  const currentAction = stepActivity[run.current_step ?? ""] ?? statusLabel[run.status];
+  const live = !terminal.has(run.status);
+  const recent = events.slice(0, 5);
+  return (
+    <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-[#080c12] shadow-[0_20px_60px_rgba(0,0,0,0.22)]">
+      <div className="flex h-10 items-center border-b border-white/[0.07] bg-white/[0.025] px-3">
+        <div className="flex gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><span className="h-2.5 w-2.5 rounded-full bg-amber-300/70" /><span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></div>
+        <span className="mx-auto text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-600">Agent Live View</span>
+        <span className={`h-1.5 w-1.5 rounded-full ${live ? "animate-pulse bg-cyan-300" : run.status === "completed" ? "bg-emerald-400" : "bg-slate-600"}`} />
+      </div>
+      <div className="p-4">
+        <div className="flex items-center gap-3">
+          <AgentGlyph id={agent?.id ?? "boss"} color={agent?.color ?? "#67e8f9"} size="sm" active={live} />
+          <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-200">{agent?.name ?? "BOSS"}</p><p className="mt-0.5 truncate text-[10px] text-cyan-300/65">{currentAction}</p></div>
+          <span className={`rounded-md px-2 py-1 text-[9px] font-semibold uppercase tracking-wider ${live ? "bg-cyan-300/[0.08] text-cyan-200/70" : "bg-white/[0.05] text-slate-500"}`}>{live ? "Live" : statusLabel[run.status]}</span>
+        </div>
+        <div className="mt-4 rounded-xl border border-white/[0.06] bg-black/20 p-3 font-mono">
+          {recent.length ? recent.map((event, index) => {
+            const preview = activityPreview(event);
+            return <div key={event.id} className={`flex gap-2 py-1.5 ${index ? "border-t border-white/[0.04]" : ""}`}><span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${index === 0 && live ? "animate-pulse bg-cyan-300" : "bg-slate-700"}`} /><span className="min-w-0"><span className={`block truncate text-[10px] ${index === 0 ? "text-slate-300" : "text-slate-500"}`}>{preview.title}</span><span className="mt-0.5 block truncate text-[9px] text-slate-700">{preview.detail}</span></span></div>;
+          }) : <p className="py-4 text-center text-[10px] text-slate-700">Warte auf erste Agentenaktivität…</p>}
+          {live && <div className="mt-2 flex items-center gap-1 text-[9px] text-cyan-300/45"><span className="animate-pulse">›</span><span className="animate-pulse [animation-delay:150ms]">_</span></div>}
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,28 +23,42 @@ from backend.app.api.integrations import router as integrations_router
 from backend.app.api.missions import router as missions_router
 from backend.app.api.operations import router as operations_router
 from backend.app.api.sales import router as sales_router
+from backend.app.api.v2 import router as v2_router
 
 from backend.app.database.database import Base, engine
 from backend.app.api.tasks import router as tasks_router
 from backend.app.api.agents import router as agents_router
 from backend.app.models.run import AgentRun, RunCheckpoint, RunEvent  # noqa: F401
-from backend.app.models.project import Project, ProjectTask  # noqa: F401
+from backend.app.models.project import Project, ProjectArtifact, ProjectTask  # noqa: F401
 from backend.app.models.mission import (  # noqa: F401
     IntegrationRequirement,
     MissionPlan,
     MissionPlanTask,
 )
+from backend.app.models.mission_v2 import (  # noqa: F401
+    AgentAssignment,
+    Approval,
+    AuditedToolCall,
+    CostEntry,
+    Mission,
+    QualityGate,
+    ResourceLease,
+    WorkItem,
+)
 from backend.app.core.version import MISSION_CONTROL_VERSION
 from backend.app.services.run_service import run_service
 from backend.app.services.project_service import project_service
+from backend.app.services.mission_scheduler_v2 import mission_scheduler_v2
 
 Base.metadata.create_all(bind=engine)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    run_service.resume_incomplete()
-    project_service.recover_autopilots()
+    if os.getenv("MISSION_CONTROL_TESTING") != "1":
+        run_service.resume_incomplete()
+        project_service.recover_autopilots()
+        mission_scheduler_v2.recover()
     yield
 
 
@@ -81,6 +96,7 @@ app.include_router(integrations_router)
 app.include_router(missions_router)
 app.include_router(operations_router)
 app.include_router(sales_router)
+app.include_router(v2_router)
 
 # Temporäre Kompatibilität für den früheren, nicht mehr kanonischen API-Pfad.
 for legacy_router in (

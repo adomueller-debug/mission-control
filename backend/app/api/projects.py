@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+import mimetypes
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.app.api.runs import RunOptions
 from backend.app.services.project_service import project_service
+from backend.app.services.project_artifact_service import project_artifact_service
 
 router = APIRouter(prefix="/api/v1", tags=["Projects"])
 
@@ -95,6 +98,24 @@ def update_project(project_id: str, request: UpdateProjectRequest):
     return project
 
 
+@router.post("/projects/{project_id}/archive")
+def archive_project(project_id: str):
+    try:
+        return project_service.archive_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden") from exc
+
+
+@router.post("/projects/{project_id}/restore")
+def restore_project(project_id: str):
+    try:
+        return project_service.restore_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/tasks", status_code=201)
 def create_project_task(project_id: str, request: CreateProjectTaskRequest):
     payload = request.model_dump(exclude={"due_at"})
@@ -157,3 +178,97 @@ def stop_project_autopilot(project_id: str):
         return project_service.disable_autopilot(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Projekt nicht gefunden") from exc
+
+
+@router.get("/projects/{project_id}/artifacts")
+def list_project_artifacts(project_id: str):
+    if project_service.get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden")
+    return project_artifact_service.list_project(project_id)
+
+
+@router.post("/projects/{project_id}/artifacts/sync", status_code=202)
+def sync_project_artifacts(project_id: str):
+    if project_service.get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Projekt nicht gefunden")
+    scheduled = project_artifact_service.schedule_sync(project_id)
+    return {
+        "status": "syncing" if scheduled else "unchanged",
+        "message": (
+            "Die automatische Drive-Synchronisierung läuft im Hintergrund."
+            if scheduled
+            else "Die Synchronisierung läuft bereits oder Drive ist nicht konfiguriert."
+        ),
+    }
+
+
+@router.get("/project-artifacts/{artifact_id}/content")
+def get_project_artifact(artifact_id: str):
+    artifact = project_artifact_service.get(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artefakt nicht gefunden")
+    path = Path(artifact.storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=400, detail="Artefakt ist kein Dateiobjekt")
+    return FileResponse(
+        path,
+        media_type=artifact.media_type,
+        filename=path.name,
+    )
+
+
+@router.get("/project-artifacts/{artifact_id}/preview")
+def preview_project_artifact(artifact_id: str):
+    return _preview_project_artifact(artifact_id, "")
+
+
+@router.get("/project-artifacts/{artifact_id}/preview/{asset_path:path}")
+def preview_project_artifact_asset(artifact_id: str, asset_path: str):
+    return _preview_project_artifact(artifact_id, asset_path)
+
+
+def _preview_project_artifact(artifact_id: str, asset_path: str):
+    artifact = project_artifact_service.get(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Vorschau nicht gefunden")
+    if artifact.artifact_type == "website":
+        root = Path(artifact.storage_path).resolve()
+        relative = asset_path or artifact.entry_path or "index.html"
+        target = (root / relative).resolve()
+        if root not in target.parents and target != root:
+            raise HTTPException(status_code=403, detail="Ungültiger Vorschaupfad")
+    else:
+        if asset_path:
+            raise HTTPException(status_code=404, detail="Vorschau-Datei nicht gefunden")
+        target = Path(artifact.storage_path).resolve()
+        if not (
+            artifact.media_type.startswith("text/")
+            or artifact.media_type
+            in {
+                "application/json",
+                "application/pdf",
+                "image/gif",
+                "image/jpeg",
+                "image/png",
+                "image/svg+xml",
+                "image/webp",
+            }
+        ):
+            raise HTTPException(status_code=415, detail="Keine Inline-Vorschau verfügbar")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Vorschau-Datei nicht gefunden")
+    media_type = artifact.media_type or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return FileResponse(
+        target,
+        media_type=media_type,
+        content_disposition_type="inline",
+        headers={
+            "Content-Security-Policy": (
+                "default-src 'self' data:; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "connect-src 'none'; form-action 'none'; base-uri 'self'; "
+                "frame-ancestors http://127.0.0.1:5173 http://localhost:5173"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

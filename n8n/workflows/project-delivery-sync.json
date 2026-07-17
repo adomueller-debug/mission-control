@@ -1,0 +1,148 @@
+{
+  "name": "Mission Control – Project Delivery Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control-project-delivery",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "delivery-webhook",
+      "name": "Project Delivery Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-600, 0],
+      "webhookId": "mission-control-project-delivery"
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ ($('Project Delivery Webhook').first().json.body.project.name + ' (' + $('Project Delivery Webhook').first().json.body.project.id.slice(0, 8) + ')').replace(/[\\/:*?\"<>|]/g, '-') }}",
+        "driveId": { "__rl": true, "mode": "list", "value": "My Drive" },
+        "folderId": { "__rl": true, "mode": "id", "value": "={{ $('Project Delivery Webhook').first().json.body.root_folder_id }}" },
+        "options": {}
+      },
+      "id": "create-project-folder",
+      "name": "Create Project Delivery Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-420, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Project Delivery Webhook').first().json.body ?? $('Project Delivery Webhook').first().json;\nif (!input.project?.id || !input.root_folder_id) throw new Error('project.id und root_folder_id sind erforderlich');\nconst artifacts = Array.isArray(input.artifacts) ? input.artifacts : [];\nif (!artifacts.length) throw new Error('Keine synchronisierbaren Artefakte empfangen');\nreturn artifacts.map((artifact) => ({\n  json: { artifact_key: artifact.key, artifact_name: artifact.name, project: input.project, spreadsheet_id: input.spreadsheet_id },\n  binary: { data: { data: artifact.content_base64, mimeType: artifact.media_type || 'application/octet-stream', fileName: artifact.name } },\n  pairedItem: { item: 0 }\n}));"
+      },
+      "id": "prepare-delivery",
+      "name": "Prepare Delivery Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-180, 0]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "inputDataFieldName": "data",
+        "name": "={{ $binary.data.fileName }}",
+        "driveId": { "__rl": true, "mode": "list", "value": "My Drive" },
+        "folderId": { "__rl": true, "mode": "id", "value": "={{ $('Create Project Delivery Folder').first().json.id }}" },
+        "options": {}
+      },
+      "id": "upload-artifacts",
+      "name": "Upload Artifacts to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [60, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "__GOOGLE_DRIVE_CREDENTIAL_ID__",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const uploaded = $input.all();\nconst source = $('Prepare Delivery Files').all();\nconst artifactUrls = {};\nfor (let index = 0; index < uploaded.length; index++) {\n  const key = source[index]?.json.artifact_key;\n  const id = uploaded[index]?.json.id;\n  if (key && id) artifactUrls[key] = `https://drive.google.com/open?id=${id}`;\n}\nconst project = source[0].json.project;\nreturn [{ json: { status: 'synced', project, spreadsheet_id: source[0].json.spreadsheet_id, artifact_count: uploaded.length, artifact_urls: artifactUrls } }];"
+      },
+      "id": "delivery-result",
+      "name": "Build Delivery Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "={{ $json.spreadsheet_id }}" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Aktivitäten" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Aktivitäts-ID": "={{ 'DELIVERY-' + $json.project.id + '-' + $now.toMillis() }}",
+            "Lead-ID": "",
+            "Zeitpunkt": "={{ $now.toISO() }}",
+            "Typ": "Projektlieferung",
+            "Kanal": "Google Drive",
+            "Agent": "FLOW",
+            "Zusammenfassung": "={{ $json.project.name }}",
+            "Ergebnis": "={{ $json.artifact_count + ' Artefakte gesichert' }}",
+            "Nächste Aktion": "Ergebnisse in Mission Control prüfen",
+            "Freigabe erforderlich": "Nein"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "Aktivitäts-ID", "displayName": "Aktivitäts-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Lead-ID", "displayName": "Lead-ID", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Zeitpunkt", "displayName": "Zeitpunkt", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Typ", "displayName": "Typ", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Kanal", "displayName": "Kanal", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Agent", "displayName": "Agent", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Zusammenfassung", "displayName": "Zusammenfassung", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Ergebnis", "displayName": "Ergebnis", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Nächste Aktion", "displayName": "Nächste Aktion", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "Freigabe erforderlich", "displayName": "Freigabe erforderlich", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-delivery",
+      "name": "Log Delivery in Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [540, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "__GOOGLE_SHEETS_CREDENTIAL_ID__",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Delivery Result').first().json) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "return-delivery",
+      "name": "Return Delivery Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [780, 0]
+    }
+  ],
+  "connections": {
+    "Project Delivery Webhook": { "main": [[{ "node": "Create Project Delivery Folder", "type": "main", "index": 0 }]] },
+    "Create Project Delivery Folder": { "main": [[{ "node": "Prepare Delivery Files", "type": "main", "index": 0 }]] },
+    "Prepare Delivery Files": { "main": [[{ "node": "Upload Artifacts to Google Drive", "type": "main", "index": 0 }]] },
+    "Upload Artifacts to Google Drive": { "main": [[{ "node": "Build Delivery Result", "type": "main", "index": 0 }]] },
+    "Build Delivery Result": { "main": [[{ "node": "Log Delivery in Google Sheets", "type": "main", "index": 0 }]] },
+    "Log Delivery in Google Sheets": { "main": [[{ "node": "Return Delivery Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

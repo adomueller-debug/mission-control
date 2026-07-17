@@ -5,10 +5,18 @@ import {
   Bot,
   BriefcaseBusiness,
   CalendarDays,
+  ChevronDown,
   CheckCircle2,
   CircleDollarSign,
+  Download,
+  ExternalLink,
+  Eye,
+  FileCode2,
+  FileText,
   FolderKanban,
+  Globe2,
   ListTodo,
+  PackageCheck,
   Pause,
   Play,
   Plus,
@@ -16,10 +24,11 @@ import {
   RotateCcw,
   Target,
   TriangleAlert,
+  X,
 } from "lucide-react";
 
 import type { AgentProfile } from "../../lib/agentTypes";
-import { api } from "../../lib/api";
+import { API_BASE, api } from "../../lib/api";
 import type {
   Project,
   ProjectStatus,
@@ -75,8 +84,9 @@ type Props = {
 export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectId, createRequest = 0, onOpenRun }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(initialProjectId ?? null);
-  const [portfolioMode, setPortfolioMode] = useState<"current" | "archived">("current");
+  const [portfolioMode, setPortfolioMode] = useState<"current" | "completed" | "archived">("current");
   const [showCreate, setShowCreate] = useState(false);
+  const [projectActionId, setProjectActionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,8 +94,9 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
     try {
       const result = await api<Project[]>("/api/v1/projects");
       setProjects(result);
-      if (initialProjectId && result.find((project) => project.id === initialProjectId)?.status === "archived") {
-        setPortfolioMode("archived");
+      const initialStatus = result.find((project) => project.id === initialProjectId)?.status;
+      if (initialStatus === "archived" || initialStatus === "completed") {
+        setPortfolioMode(initialStatus);
       }
       setError(null);
     } catch (reason) {
@@ -115,16 +126,17 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
   }, [createRequest]);
 
   const selected = projects.find((project) => project.id === selectedId) ?? null;
-  const currentProjects = projects.filter((project) => project.status !== "archived");
+  const currentProjects = projects.filter((project) => !["completed", "archived"].includes(project.status));
+  const completedProjects = projects.filter((project) => project.status === "completed");
   const archivedProjects = projects.filter((project) => project.status === "archived");
-  const visibleProjects = portfolioMode === "archived" ? archivedProjects : currentProjects;
+  const visibleProjects = portfolioMode === "archived" ? archivedProjects : portfolioMode === "completed" ? completedProjects : currentProjects;
   const operationalTasks = currentProjects.flatMap((project) => project.tasks.map((task) => ({ ...task, projectName: project.name })));
   const activeProjects = currentProjects.filter((project) => ["planning", "active"].includes(project.status)).length;
   const openTasks = operationalTasks.filter((task) => openStatuses.has(task.status)).length;
   const blockedTasks = operationalTasks.filter((task) => task.status === "blocked").length;
   const activeAssignments = operationalTasks.filter((task) => activeWorkStatuses.has(task.status) && task.assigned_agent);
 
-  function switchPortfolio(mode: "current" | "archived") {
+  function switchPortfolio(mode: "current" | "completed" | "archived") {
     setPortfolioMode(mode);
     setSelectedId(null);
     setShowCreate(false);
@@ -184,6 +196,33 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
     await load();
   }
 
+  async function archiveProject(project: Project) {
+    if (!window.confirm(`„${project.name}“ archivieren? Laufende Aufgaben werden dabei gestoppt.`)) return;
+    setProjectActionId(project.id);
+    try {
+      await api<Project>(`/api/v1/projects/${project.id}/archive`, { method: "POST" });
+      setPortfolioMode("archived");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Projekt konnte nicht archiviert werden");
+    } finally {
+      setProjectActionId(null);
+    }
+  }
+
+  async function restoreProject(project: Project) {
+    setProjectActionId(project.id);
+    try {
+      await api<Project>(`/api/v1/projects/${project.id}/restore`, { method: "POST" });
+      setPortfolioMode("current");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Projekt konnte nicht wiederhergestellt werden");
+    } finally {
+      setProjectActionId(null);
+    }
+  }
+
   return (
     <div className="mc-enter mt-7 space-y-5">
       {error && (
@@ -194,7 +233,7 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <PortfolioMetric label="Aktuelle Projekte" value={currentProjects.length} detail={`${activeProjects} in Planung oder aktiv`} icon={<FolderKanban size={17} />} />
-        <PortfolioMetric label="Offene Aufgaben" value={openTasks} detail="Archivierte Projekte ausgenommen" icon={<ListTodo size={17} />} />
+        <PortfolioMetric label="Offene Aufgaben" value={openTasks} detail="Nur aktuelle Projekte" icon={<ListTodo size={17} />} />
         <PortfolioMetric label="Agenten im Einsatz" value={new Set(activeAssignments.map((task) => task.assigned_agent)).size} detail="projektübergreifend" icon={<Bot size={17} />} />
         <PortfolioMetric label="Blockiert" value={blockedTasks} detail={blockedTasks ? "Handlungsbedarf" : "Keine Blocker"} icon={<TriangleAlert size={17} />} alert={blockedTasks > 0} />
       </section>
@@ -210,9 +249,10 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
               <Plus size={16} />
             </button>
           </div>
-          <div className="mc-segment mx-2 mt-2 grid grid-cols-2 rounded-xl p-1">
-            <button onClick={() => switchPortfolio("current")} className={`rounded-lg px-3 py-2 text-[11px] font-medium ${portfolioMode === "current" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}>Aktuell <span className="ml-1 text-slate-600">{currentProjects.length}</span></button>
-            <button onClick={() => switchPortfolio("archived")} className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-medium ${portfolioMode === "archived" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}><Archive size={12} /> Archiviert <span className="text-slate-600">{archivedProjects.length}</span></button>
+          <div className="mc-segment mx-2 mt-2 grid grid-cols-3 gap-1 rounded-xl p-1">
+            <button onClick={() => switchPortfolio("current")} className={`min-w-0 rounded-lg px-1 py-2 text-[10px] font-medium ${portfolioMode === "current" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}>Aktuell <span className="text-slate-600">{currentProjects.length}</span></button>
+            <button onClick={() => switchPortfolio("completed")} className={`min-w-0 rounded-lg px-1 py-2 text-[10px] font-medium ${portfolioMode === "completed" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}>Fertig <span className="text-slate-600">{completedProjects.length}</span></button>
+            <button onClick={() => switchPortfolio("archived")} className={`min-w-0 rounded-lg px-1 py-2 text-[10px] font-medium ${portfolioMode === "archived" ? "mc-segment-active text-slate-200" : "text-slate-600 hover:text-slate-400"}`}>Archiv <span className="text-slate-600">{archivedProjects.length}</span></button>
           </div>
           {showCreate && <CreateProjectForm agents={agents.filter((agent) => !agent.specialist)} onSubmit={createProject} />}
           <div className="mt-2 space-y-2">
@@ -225,11 +265,14 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
                   </div>
                   <span className={`text-xs font-medium ${project.status === "archived" ? "text-slate-600" : "text-cyan-300"}`}>{project.progress}%</span>
                 </div>
-                <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]"><div className={`h-full rounded-full transition-all duration-700 ${project.status === "archived" ? "bg-slate-700" : "bg-cyan-400"}`} style={{ width: `${project.progress}%` }} /></div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <MiniProgress label="Agenten" value={project.progress} muted={project.status === "archived"} />
+                  <MiniProgress label="Ablage" value={project.delivery_progress} muted={project.status === "archived"} />
+                </div>
                 {project.status === "archived" ? <p className="mt-2 flex items-center gap-1.5 text-[10px] text-slate-700"><Archive size={10} /> Keine aktiven Aufgaben</p> : <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600"><span>{project.tasks.filter((task) => openStatuses.has(task.status)).length} offen</span><span>{project.active_agents.length} Agenten</span></div>}
               </button>
             ))}
-            {!loading && visibleProjects.length === 0 && (portfolioMode === "archived" ? <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-10 text-center"><Archive size={18} className="mx-auto text-slate-700" /><p className="mt-2 text-xs text-slate-600">Noch keine archivierten Projekte</p></div> : <EmptyPortfolio onCreate={() => setShowCreate(true)} />)}
+            {!loading && visibleProjects.length === 0 && (portfolioMode === "archived" ? <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-10 text-center"><Archive size={18} className="mx-auto text-slate-700" /><p className="mt-2 text-xs text-slate-600">Noch keine archivierten Projekte</p></div> : portfolioMode === "completed" ? <div className="rounded-xl border border-dashed border-white/[0.06] px-4 py-10 text-center"><CheckCircle2 size={18} className="mx-auto text-slate-700" /><p className="mt-2 text-xs text-slate-600">Noch keine abgeschlossenen Projekte</p></div> : <EmptyPortfolio onCreate={() => setShowCreate(true)} />)}
           </div>
         </div>
 
@@ -251,12 +294,14 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-lg border border-white/[0.07] bg-white/[0.03] px-2.5 py-1.5 text-xs text-slate-400">{projectStatusLabel[selected.status]}</span>
-                  <button onClick={() => void toggleAutopilot(selected)} className={`mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs ${selected.autopilot_enabled ? "text-emerald-300" : "text-slate-500"}`}>
+                  {!["completed", "archived"].includes(selected.status) && <button onClick={() => void toggleAutopilot(selected)} className={`mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs ${selected.autopilot_enabled ? "text-emerald-300" : "text-slate-500"}`}>
                     {selected.autopilot_enabled ? <Pause size={12} /> : <Play size={12} />} {selected.autopilot_enabled ? "Autopilot aktiv" : selected.tasks.some((task) => task.status === "blocked") ? "Autopilot fortsetzen" : "Autopilot starten"}
-                  </button>
+                  </button>}
+                  {selected.status !== "archived" && <button disabled={projectActionId === selected.id} onClick={() => void archiveProject(selected)} className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 hover:text-amber-200"><Archive size={12} /> {projectActionId === selected.id ? "Archiviere…" : "Archivieren"}</button>}
                 </div>
               </div>
-              {selected.status === "archived" ? <ArchivedProjectSummary project={selected} /> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
+              <DeliveryProgress project={selected} onRefresh={load} />
+              {selected.status === "archived" ? <><ArchivedProjectSummary project={selected} restoring={projectActionId === selected.id} onRestore={() => restoreProject(selected)} /><ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} /></> : <>{selected.autopilot_enabled ? <AutopilotStatus project={selected} agents={agents} /> : selected.tasks.length === 0 ? <MissionPlanner key={selected.id} project={selected} agents={agents} onApproved={load} /> : null}<ProjectResults project={selected} agents={agents} onOpenRun={onOpenRun} /><TaskBoard project={selected} agents={agents} onCreate={createTask} onUpdate={updateTask} onStart={startTask} onOpenRun={onOpenRun} /></>}
             </>
           ) : (
             <div className="grid min-h-[500px] place-items-center px-6 text-center"><div><FolderKanban size={26} className="mx-auto text-slate-700" /><p className="mt-3 text-sm font-medium text-slate-400">Wähle ein Projekt</p><p className="mt-1 max-w-sm text-xs leading-5 text-slate-600">Details, Briefing und Aufgaben werden erst geöffnet, wenn du ein Projekt auswählst.</p></div></div>
@@ -269,15 +314,124 @@ export function ProjectPortfolioView({ agents, defaultWorkspace, initialProjectI
   );
 }
 
+function MiniProgress({ label, value, muted }: { label: string; value: number; muted: boolean }) {
+  return <div><div className="mb-1 flex items-center justify-between text-[8px] text-slate-700"><span>{label}</span><span>{value}%</span></div><div className="h-1 overflow-hidden rounded-full bg-white/[0.06]"><div className={`h-full rounded-full transition-all duration-700 ${muted ? "bg-slate-700" : label === "Ablage" ? "bg-emerald-400" : "bg-cyan-400"}`} style={{ width: `${value}%` }} /></div></div>;
+}
+
+function DeliveryProgress({ project, onRefresh }: { project: Project; onRefresh: () => Promise<void> }) {
+  const [retrying, setRetrying] = useState(false);
+
+  async function retry() {
+    setRetrying(true);
+    try {
+      await api(`/api/v1/projects/${project.id}/artifacts/sync`, { method: "POST" });
+      await onRefresh();
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  if (project.tasks.length === 0 && project.delivery_total === 0) return null;
+  const complete = project.status === "completed" && project.delivery_status === "synced";
+  return <section className={`mt-5 rounded-2xl border p-4 ${complete ? "border-emerald-300/20 bg-emerald-300/[0.045]" : "border-white/[0.06] bg-black/10"}`}>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3"><span className={`grid h-9 w-9 place-items-center rounded-xl ${complete ? "bg-emerald-300/10 text-emerald-300" : "bg-cyan-300/[0.07] text-cyan-300"}`}>{complete ? <CheckCircle2 size={16} /> : <RefreshCw size={15} className={project.delivery_status === "syncing" ? "animate-spin" : ""} />}</span><div><p className="text-sm font-medium text-slate-200">{complete ? "Projekt und Ablage abgeschlossen" : "Projektfortschritt"}</p><p className="mt-0.5 text-[10px] text-slate-600">{project.delivery_status === "syncing" ? "Ergebnisse werden automatisch in Drive einsortiert." : complete ? "Alle Ergebnisse stehen im Dashboard und im Projektordner bereit." : `${project.delivery_synced} von ${project.delivery_total} Ergebnissen in Drive`}</p></div></div>
+      <div className="flex items-center gap-2">{project.delivery_status === "failed" && <button disabled={retrying} onClick={() => void retry()} className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] text-amber-200"><RotateCcw size={11} className={retrying ? "animate-spin" : ""} /> Erneut versuchen</button>}{project.drive_url && <a href={project.drive_url} target="_blank" rel="noreferrer" className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] text-emerald-200"><ExternalLink size={11} /> Projekt in Drive</a>}</div>
+    </div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2"><ProgressTrack label="Agentenarbeit" value={project.progress} detail={`${project.task_counts.completed ?? 0} von ${project.tasks.filter((task) => task.status !== "cancelled").length} Aufgaben`} color="cyan" /><ProgressTrack label="Dokumente & Ergebnisse" value={project.delivery_progress} detail={project.delivery_status === "failed" ? "Synchronisierung braucht Aufmerksamkeit" : `${project.delivery_synced} von ${project.delivery_total} gesichert`} color="emerald" /></div>
+    {project.delivery_status === "failed" && <p className="mt-3 line-clamp-2 rounded-lg border border-amber-300/10 bg-amber-300/[0.035] px-3 py-2 text-[10px] leading-4 text-amber-100/60">Die automatische Ablage konnte nicht abgeschlossen werden. Ein erneuter Versuch legt keine doppelten Ordner an.</p>}
+  </section>;
+}
+
+function ProgressTrack({ label, value, detail, color }: { label: string; value: number; detail: string; color: "cyan" | "emerald" }) {
+  return <div className="rounded-xl border border-white/[0.05] bg-white/[0.018] p-3"><div className="flex items-center justify-between text-[11px]"><span className="text-slate-400">{label}</span><span className={color === "cyan" ? "text-cyan-300" : "text-emerald-300"}>{value}%</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]"><div className={`h-full rounded-full transition-all duration-700 ${color === "cyan" ? "bg-cyan-400" : "bg-emerald-400"}`} style={{ width: `${value}%` }} /></div><p className="mt-2 text-[9px] text-slate-700">{detail}</p></div>;
+}
+
 function AutopilotStatus({ project, agents }: { project: Project; agents: AgentProfile[] }) {
   const current = project.tasks.find((task) => activeWorkStatuses.has(task.status));
   const agent = agents.find((item) => item.id === current?.assigned_agent);
   return <div className="mt-5 flex items-center gap-3 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.035] p-4"><div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-300/10 text-emerald-300"><Bot size={16} /></div><div className="min-w-0 flex-1"><p className="text-sm font-medium text-emerald-100">BOSS Autopilot orchestriert dieses Projekt</p><p className="mt-1 truncate text-[11px] text-slate-500">{current ? `${agent?.name ?? current.assigned_agent ?? "Agent"}: ${current.title}` : "Die nächste abhängige Aufgabe wird automatisch gestartet."}</p></div><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /></div>;
 }
 
-function ArchivedProjectSummary({ project }: { project: Project }) {
+function ArchivedProjectSummary({ project, restoring, onRestore }: { project: Project; restoring: boolean; onRestore: () => Promise<void> }) {
   const completed = project.tasks.filter((task) => task.status === "completed").length;
-  return <div className="mt-5 rounded-2xl border border-white/[0.06] bg-black/10 p-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.04] text-slate-500"><Archive size={16} /></div><div><p className="text-sm font-medium text-slate-300">Projekt ist archiviert</p><p className="mt-1 text-xs leading-5 text-slate-600">Seine {project.tasks.length} Aufgaben werden nicht als offen gezählt und belegen keine Agenten. {completed} Aufgaben waren beim Archivieren abgeschlossen.</p></div></div><button className="mt-4 flex items-center gap-2 rounded-lg border border-white/[0.07] px-3 py-2 text-[11px] text-slate-500" disabled><RotateCcw size={12} /> Wiederherstellung folgt</button></div>;
+  return <div className="mt-5 rounded-2xl border border-white/[0.06] bg-black/10 p-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.04] text-slate-500"><Archive size={16} /></div><div><p className="text-sm font-medium text-slate-300">Projekt ist archiviert</p><p className="mt-1 text-xs leading-5 text-slate-600">Seine {project.tasks.length} Aufgaben werden nicht als offen gezählt und belegen keine Agenten. {completed} Aufgaben waren beim Archivieren abgeschlossen.</p></div></div><button onClick={() => void onRestore()} className="mc-button mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] text-slate-400" disabled={restoring}><RotateCcw size={12} className={restoring ? "animate-spin" : ""} /> {restoring ? "Wird wiederhergestellt…" : "Wiederherstellen"}</button></div>;
+}
+
+type ResultArtifact = { title: string; content: string; artifact_type?: string };
+
+function ProjectResults({ project, agents, onOpenRun }: { project: Project; agents: AgentProfile[]; onOpenRun: (id: string) => void }) {
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const results = project.tasks.flatMap((task) => {
+    const payload = task.result;
+    if (!payload) return [];
+    const summary = typeof payload.summary === "string" ? payload.summary : "";
+    const files = Array.isArray(payload.files) ? payload.files.filter((item): item is string => typeof item === "string") : [];
+    const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts.filter(isResultArtifact) : [];
+    const findings = Array.isArray(payload.findings) ? payload.findings.filter((item): item is string => typeof item === "string") : [];
+    return [{ task, summary, files, artifacts, findings }];
+  });
+  const persisted = project.artifacts ?? [];
+  if (results.length === 0 && persisted.length === 0) return null;
+  const fileCount = results.reduce((total, item) => total + item.files.length, 0);
+  const artifactCount = persisted.length || results.reduce((total, item) => total + item.artifacts.length, 0);
+  const websites = persisted.filter((artifact) => artifact.preview_kind === "website");
+  const deliverables = persisted.filter((artifact) => artifact.preview_kind !== "website");
+  const visibleDeliverables = showAll ? deliverables : deliverables.slice(0, 6);
+  const preview = persisted.find((artifact) => artifact.id === previewId);
+
+  return (
+    <section className="mt-5 rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.02] p-3 sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2"><PackageCheck size={15} className="text-emerald-300" /><div><h3 className="text-sm font-semibold">Ergebnisse & Artefakte</h3><p className="mt-0.5 text-[10px] text-slate-600">Persistiert aus {results.length} abgeschlossenen Agentenaufgaben</p></div></div>
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500"><span className="rounded-lg bg-white/[0.04] px-2 py-1">{fileCount} Dateien</span><span className="rounded-lg bg-white/[0.04] px-2 py-1">{artifactCount} Artefakte</span>{project.drive_url && <a href={project.drive_url} target="_blank" rel="noreferrer" className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-emerald-300/80"><ExternalLink size={11} /> Drive öffnen</a>}</div>
+      </div>
+      {websites.length > 0 && <div className="mt-4 grid gap-3 xl:grid-cols-2">{websites.map((artifact) => <article key={artifact.id} className="group overflow-hidden rounded-xl border border-cyan-300/10 bg-black/20"><button onClick={() => setPreviewId(artifact.id)} className="relative block aspect-[16/9] w-full overflow-hidden bg-[#070b10] text-left"><iframe title={artifact.name} src={`${API_BASE}/api/v1/project-artifacts/${artifact.id}/preview`} sandbox="allow-scripts" tabIndex={-1} className="pointer-events-none h-[200%] w-[200%] origin-top-left scale-50 border-0 opacity-80 transition duration-500 group-hover:scale-[0.52] group-hover:opacity-100" /><span className="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/25"><span className="flex translate-y-2 items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-2 text-[10px] text-white opacity-0 shadow-2xl backdrop-blur-xl transition group-hover:translate-y-0 group-hover:opacity-100"><Eye size={12} /> Vorschau öffnen</span></span></button><div className="flex items-center gap-3 p-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-cyan-300/10 text-cyan-300"><Globe2 size={14} /></span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-slate-300">{artifact.name}</span><span className="mt-0.5 block text-[9px] text-slate-600">Website · {formatBytes(artifact.size_bytes)} · {syncLabel(artifact.sync_status)}</span></span><button onClick={() => setPreviewId(artifact.id)} className="mc-icon-button h-8 w-8 rounded-lg text-slate-400" title="Vorschau öffnen"><Eye size={13} /></button></div></article>)}</div>}
+      {deliverables.length > 0 && <><div className="mt-3 divide-y divide-white/[0.05] overflow-hidden rounded-xl border border-white/[0.06] bg-black/10">{visibleDeliverables.map((artifact) => <div key={artifact.id} className="flex items-center gap-3 px-3 py-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-slate-500"><FileText size={13} /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] text-slate-300">{artifact.name}</span><span className="mt-0.5 block text-[9px] text-slate-600">{artifact.artifact_type} · {formatBytes(artifact.size_bytes)} · {syncLabel(artifact.sync_status)}</span></span>{artifact.preview_available && <button onClick={() => setPreviewId(artifact.id)} className="mc-icon-button grid h-8 w-8 place-items-center rounded-lg text-slate-400" title="Vorschau"><Eye size={12} /></button>}{artifact.external_url && <a href={artifact.external_url} target="_blank" rel="noreferrer" className="mc-icon-button grid h-8 w-8 place-items-center rounded-lg text-slate-400" title="In Google Drive öffnen"><ExternalLink size={12} /></a>}<a href={`${API_BASE}/api/v1/project-artifacts/${artifact.id}/content`} className="mc-icon-button grid h-8 w-8 place-items-center rounded-lg text-slate-400" title="Herunterladen"><Download size={12} /></a></div>)}</div>{deliverables.length > 6 && <button onClick={() => setShowAll((value) => !value)} className="mc-arrow-action mt-2 text-[10px] text-slate-500">{showAll ? "Weniger anzeigen" : `Alle ${deliverables.length} Ergebnisse anzeigen`}</button>}</>}
+      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+        {results.map(({ task, summary, files, artifacts, findings }) => {
+          const agent = agents.find((item) => item.id === task.assigned_agent);
+          return (
+            <details key={task.id} className="group rounded-xl border border-white/[0.06] bg-black/10 open:border-emerald-300/10">
+              <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-emerald-300"><CheckCircle2 size={14} /></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-slate-300">{task.title}</span><span className="mt-1 block text-[9px] text-slate-600">{agent?.name ?? task.assigned_agent ?? "Agent"} · {files.length} Dateien · {artifacts.length} Artefakte</span></span>
+                <ChevronDown size={13} className="text-slate-700 transition-transform duration-300 group-open:rotate-180" />
+              </summary>
+              <div className="border-t border-white/[0.055] px-3 pb-3 pt-3">
+                {summary && <p className="text-[11px] leading-5 text-slate-400">{summary}</p>}
+                {files.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{files.map((file) => <span key={file} className="flex max-w-full items-center gap-1 rounded-md bg-cyan-300/[0.05] px-2 py-1 text-[9px] text-cyan-200/60"><FileCode2 size={9} /><span className="truncate">{file}</span></span>)}</div>}
+                {findings.length > 0 && <ul className="mt-3 space-y-1 text-[10px] leading-4 text-slate-500">{findings.slice(0, 3).map((finding) => <li key={finding}>• {finding}</li>)}</ul>}
+                {artifacts.map((artifact) => <details key={artifact.title} className="mt-2 rounded-lg border border-white/[0.05] bg-white/[0.018]"><summary className="cursor-pointer list-none px-2.5 py-2 text-[10px] text-slate-400">{artifact.title}<span className="ml-2 uppercase text-slate-700">{artifact.artifact_type}</span></summary><p className="max-h-48 overflow-auto whitespace-pre-wrap border-t border-white/[0.05] p-2.5 text-[10px] leading-5 text-slate-500">{artifact.content}</p></details>)}
+                {task.run_id && <button onClick={() => onOpenRun(task.run_id!)} className="mc-arrow-action mt-3 flex items-center gap-1.5 text-[10px] text-cyan-300/70">Vollständigen Run öffnen <ArrowRight size={11} /></button>}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+      {preview && <div className="fixed inset-0 z-50 grid place-items-center bg-[#030507]/85 p-3 backdrop-blur-xl sm:p-8" role="dialog" aria-modal="true" aria-label={preview.name}><div className="flex h-full max-h-[900px] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#090d13] shadow-2xl"><div className="flex items-center gap-3 border-b border-white/[0.07] px-4 py-3">{preview.preview_kind === "website" ? <Globe2 size={15} className="text-cyan-300" /> : <FileText size={15} className="text-emerald-300" />}<span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-200">{preview.name}</span><a href={`${API_BASE}/api/v1/project-artifacts/${preview.id}/preview`} target="_blank" rel="noreferrer" className="mc-button flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-400"><ExternalLink size={11} /> Neuer Tab</a><button onClick={() => setPreviewId(null)} className="mc-icon-button h-8 w-8 rounded-lg text-slate-400" aria-label="Vorschau schließen"><X size={14} /></button></div><iframe title={preview.name} src={`${API_BASE}/api/v1/project-artifacts/${preview.id}/preview`} sandbox="allow-scripts" className="min-h-0 flex-1 border-0 bg-white" /></div></div>}
+    </section>
+  );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function syncLabel(status: string) {
+  if (status === "synced") return "Drive";
+  if (status === "pending") return "Drive ausstehend";
+  if (status === "failed") return "Sync fehlgeschlagen";
+  return "lokal gesichert";
+}
+
+function isResultArtifact(value: unknown): value is ResultArtifact {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.title === "string" && typeof candidate.content === "string";
 }
 
 function TaskBoard({ project, agents, onCreate, onUpdate, onStart, onOpenRun }: {

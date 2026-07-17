@@ -23,3 +23,9 @@ export function runSocketUrl(runId: string): string {
   const protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${url.host}/api/v1/ws/runs/${runId}`;
 }
+
+export function missionSocketUrl(missionId: string): string {
+  const url = new URL(API_BASE);
+  const protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${url.host}/api/v2/ws/missions/${missionId}`;
+}

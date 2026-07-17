@@ -244,19 +244,23 @@ def test_builder_strategy_switch_requires_full_file_replacement(
     assert "Gib niemals package.json" in captured["prompt"]
 
 
-def test_builder_receives_current_blueprint_files_during_product_repair(
+def test_builder_receives_only_customization_files_during_product_repair(
     tmp_path: Path, monkeypatch
 ):
     plan = website_plan()
     product = tmp_path / "projects" / "acme"
     source = product / "src"
     source.mkdir(parents=True)
-    (product / "package.json").write_text(
-        '{"scripts":{"build":"vite build"}}', encoding="utf-8"
-    )
     (source / "App.tsx").write_text(
         "export default function App() { return <main>Current app</main> }",
         encoding="utf-8",
+    )
+    (source / "content.ts").write_text(
+        'export const siteContent = { productName: "Current brand" };',
+        encoding="utf-8",
+    )
+    (source / "theme.css").write_text(
+        ":root { --project-accent: lime; }", encoding="utf-8"
     )
     captured: dict = {}
 
@@ -268,7 +272,7 @@ def test_builder_receives_current_blueprint_files_during_product_repair(
             return {
                 "response": (
                     '{"summary":"done","edits":[],"files":['
-                    '{"path":"projects/acme/src/App.tsx","content":"fixed"}]}'
+                    '{"path":"projects/acme/src/content.ts","content":"fixed"}]}'
                 )
             }
 
@@ -286,6 +290,8 @@ def test_builder_receives_current_blueprint_files_during_product_repair(
         blueprint=blueprint,
     )
 
-    assert "### FILE: projects/acme/package.json" in captured["prompt"]
-    assert "### FILE: projects/acme/src/App.tsx" in captured["prompt"]
-    assert "Current app" in captured["prompt"]
+    assert "### FILE: projects/acme/src/content.ts" in captured["prompt"]
+    assert "### FILE: projects/acme/src/theme.css" in captured["prompt"]
+    assert "Current brand" in captured["prompt"]
+    assert "### FILE: projects/acme/src/App.tsx" not in captured["prompt"]
+    assert captured["options"]["num_predict"] == 2048

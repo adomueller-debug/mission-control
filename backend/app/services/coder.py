@@ -80,17 +80,12 @@ def execute_plan(
     blueprint: BlueprintArtifact | dict | None = None,
 ) -> dict:
     context_files = list(plan.expected_files)
-    if plan.creation_mode:
-        blueprint_files = (
-            [item.path for item in blueprint.file_plan]
-            if isinstance(blueprint, BlueprintArtifact)
-            else [
-                str(item.get("path", ""))
-                for item in (blueprint or {}).get("file_plan", [])
-                if isinstance(item, dict)
-            ]
-        )
-        context_files.extend(path for path in blueprint_files if path)
+    if plan.creation_mode and plan.output_directory:
+        base = plan.output_directory.rstrip("/")
+        context_files = [
+            f"{base}/src/content.ts",
+            f"{base}/src/theme.css",
+        ]
     workspace_context = load_workspace_context(
         list(dict.fromkeys(context_files)), workspace
     )
@@ -183,7 +178,11 @@ JSON-Schema:
                 "keep_alive": "30m",
                 "options": {
                     "num_ctx": OLLAMA_CONTEXT,
-                    "num_predict": OLLAMA_MAX_TOKENS,
+                    "num_predict": (
+                        min(OLLAMA_MAX_TOKENS, 2048)
+                        if plan.creation_mode
+                        else OLLAMA_MAX_TOKENS
+                    ),
                     "temperature": 0.05 if attempt else 0.1,
                 },
             },

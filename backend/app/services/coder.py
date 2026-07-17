@@ -96,13 +96,16 @@ def execute_plan(
     )
     full_replacement_mode = "STRATEGIEWECHSEL" in feedback
     scope_instruction = (
-        f"Erstelle ein eigenständiges neues Produkt ausschließlich unter "
-        f"`{plan.output_directory}/`. Nutze dafür `files`; ändere keine bestehenden "
-        "Mission-Control-Dateien. Erzeuge ein professionelles, vollständiges React-/Vite-/"
-        "TypeScript-Produkt mit Komponenten, substanziellen Inhalten, responsivem Design, "
-        "Design Tokens, hochwertiger Typografie, klarer Conversion Journey und dynamischen "
-        "Animationen samt Reduced-Motion-Alternative. Eine einfache HTML-Demoseite ist "
-        "nicht ausreichend."
+        f"Individualisiere das bereits buildfähige Starterprodukt ausschließlich unter "
+        f"`{plan.output_directory}/`; ändere keine Mission-Control-Dateien. "
+        "Package-Konfiguration, Vite, TypeScript, index.html, src/main.tsx, semantisches "
+        "Grundlayout, Responsive-Basis und Reduced-Motion-Basis wurden deterministisch "
+        "erzeugt und dürfen nicht neu erfunden oder entfernt werden. Bearbeite vorrangig "
+        "src/App.tsx und src/styles.css; ergänze bei Bedarf Komponenten und lokale Assets. "
+        "Individualisiere Design, überprüfbare Inhalte, Komponenten, Conversion Journey "
+        "und hochwertige Animationen passend zum Auftrag. Verwende präzise `edits` an "
+        "den vorhandenen Dateien. `files` ist nur für neue Komponenten/Assets oder eine "
+        "ausdrücklich geforderte Vollersatz-Reparatur erlaubt."
         if plan.creation_mode and plan.output_directory
         else "Ändere nur die für das Ziel erforderlichen bestehenden Dateien."
     )
@@ -127,9 +130,9 @@ Verbindliches BLUEPRINT-Artefakt:
 Arbeitsmodus:
 {scope_instruction}
 
-Setze den Dateiplan und alle Quality Gates aus BLUEPRINT vollständig um. Wenn der Plan ein
-React-/Vite-/TypeScript-Produkt fordert, müssen package.json, index.html, TypeScript-Einstieg,
-komponentenbasierte App und ein substanzielles Stylesheet direkt buildbar geliefert werden.
+Setze den Dateiplan und alle Quality Gates aus BLUEPRINT vollständig um. Im Produktmodus ist
+das geladene Startergerüst der verbindliche Ausgangspunkt. Erhalte dessen Buildsystem und
+Barrierefreiheitsgrundlagen; liefere nur die kundenspezifische Produktschicht.
 
 Erzeuge höchstens acht präzise Edits oder zwölf kompakte neue Dateien.
 Für jede Änderung soll `search` exakt einmal im aktuellen Dateiinhalt vorkommen.

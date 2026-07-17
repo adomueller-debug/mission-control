@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import subprocess
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,264 @@ class BlueprintArtifact(BaseModel):
     quality_gates: list[str]
 
 
+def _product_name(task: str, plan: ExecutionPlan) -> str:
+    """Extract a useful, deterministic product name without another model call."""
+    candidates = (
+        r"(?:Kernaussagen:\s*)?([A-ZÄÖÜ][^:\n]{2,70}):\s*(?:Opportunity|Chance|Ziel)",
+        r"Projekt:\s*([^\n]{3,70})",
+        r"(?:für|fuer)\s+([A-ZÄÖÜ][A-Za-zÄÖÜäöüß0-9 &'.-]{2,60})",
+    )
+    for pattern in candidates:
+        match = re.search(pattern, task)
+        if match:
+            return " ".join(match.group(1).strip().split())
+    return " ".join((plan.summary or "Digitales Erlebnis").strip().split())
+
+
+def create_react_vite_scaffold(
+    plan: ExecutionPlan,
+    task: str,
+) -> list[dict[str, str]]:
+    """Return the immutable, professional baseline for a generated website.
+
+    The local model should customize the product, not reinvent its build system,
+    accessibility baseline or responsive and motion foundations on every run.
+    """
+    if not plan.creation_mode or not plan.output_directory:
+        return []
+
+    base = plan.output_directory.rstrip("/")
+    product_name = _product_name(task, plan)
+    js_name = json.dumps(product_name, ensure_ascii=False)
+    html_name = escape(product_name)
+    package = {
+        "name": re.sub(r"[^a-z0-9]+", "-", product_name.lower()).strip("-")
+        or "mission-control-product",
+        "private": True,
+        "version": "1.0.0",
+        "type": "module",
+        "scripts": {
+            "dev": "vite --host 127.0.0.1",
+            "build": "tsc -b && vite build",
+            "preview": "vite preview --host 127.0.0.1",
+        },
+        "dependencies": {"react": "^19.2.7", "react-dom": "^19.2.7"},
+        "devDependencies": {
+            "@types/react": "^19.2.17",
+            "@types/react-dom": "^19.2.3",
+            "@vitejs/plugin-react": "^6.0.3",
+            "typescript": "~6.0.2",
+            "vite": "^8.1.1",
+        },
+    }
+    app = f'''import {{ useEffect }} from "react";
+import "./styles.css";
+
+const productName = {js_name};
+
+const services = [
+  {{ number: "01", title: "Klarer Auftritt", text: "Eine fokussierte Nutzerführung bringt Angebot, Qualität und nächsten Schritt auf den Punkt." }},
+  {{ number: "02", title: "Starke Präsenz", text: "Ein eigenständiges visuelles System schafft Wiedererkennung auf jedem Bildschirm." }},
+  {{ number: "03", title: "Direkter Kontakt", text: "Gut platzierte Kontaktpunkte machen aus Interesse eine konkrete Anfrage." }},
+];
+
+export default function App() {{
+  useEffect(() => {{
+    const elements = document.querySelectorAll<HTMLElement>("[data-reveal]");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {{
+      elements.forEach((element) => element.classList.add("is-visible"));
+      return;
+    }}
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => entry.isIntersecting && entry.target.classList.add("is-visible")),
+      {{ threshold: 0.16, rootMargin: "0px 0px -8%" }},
+    );
+    elements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }}, []);
+
+  return (
+    <div className="site-shell">
+      <a className="skip-link" href="#inhalt">Zum Inhalt springen</a>
+      <header className="site-header">
+        <a className="wordmark" href="#start" aria-label={{`${{productName}} – Startseite`}}>{{productName}}</a>
+        <nav aria-label="Hauptnavigation">
+          <a href="#leistungen">Leistungen</a>
+          <a href="#profil">Profil</a>
+          <a className="nav-cta" href="#kontakt">Kontakt</a>
+        </nav>
+      </header>
+
+      <main id="inhalt">
+        <section className="hero" id="start" aria-labelledby="hero-title">
+          <div className="hero-glow" aria-hidden="true" />
+          <p className="eyebrow" data-reveal>Digitaler Auftritt · Konzeptvorschau</p>
+          <h1 id="hero-title" data-reveal>
+            Persönlich im Kern.<br /><span>Unverwechselbar im Web.</span>
+          </h1>
+          <p className="hero-copy" data-reveal>
+            Ein moderner digitaler Auftritt für {{productName}}, entwickelt für einen starken ersten Eindruck und einen einfachen Weg zur Anfrage.
+          </p>
+          <div className="hero-actions" data-reveal>
+            <a className="button button-primary" href="#kontakt">Angebot anfragen <span aria-hidden="true">↗</span></a>
+            <a className="text-link" href="#leistungen">Konzept entdecken <span aria-hidden="true">↓</span></a>
+          </div>
+          <div className="scroll-cue" aria-hidden="true"><span /> Scroll</div>
+        </section>
+
+        <section className="statement" id="profil" data-reveal>
+          <p className="section-label">Der Anspruch</p>
+          <h2>Weniger Ablenkung.<br />Mehr Wirkung.</h2>
+          <p>Klare Inhalte, großzügige Flächen und gezielte Bewegung führen Besucher intuitiv durch das Angebot. Konkrete Unternehmensangaben werden vor Veröffentlichung gemeinsam abgestimmt.</p>
+        </section>
+
+        <section className="services" id="leistungen" aria-labelledby="services-title">
+          <div className="section-heading" data-reveal>
+            <p className="section-label">Das digitale Erlebnis</p>
+            <h2 id="services-title">Gebaut für Aufmerksamkeit und Vertrauen.</h2>
+          </div>
+          <div className="service-grid">
+            {{services.map((service) => (
+              <article className="service-card" data-reveal key={{service.number}}>
+                <span>{{service.number}}</span><h3>{{service.title}}</h3><p>{{service.text}}</p>
+              </article>
+            ))}}
+          </div>
+        </section>
+
+        <section className="contact" id="kontakt" data-reveal>
+          <p className="section-label">Nächster Schritt</p>
+          <h2>Aus einem guten ersten Eindruck wird ein Gespräch.</h2>
+          <p>Diese Konzeptvorschau zeigt die gestalterische Richtung. Inhalte, Leistungen und Kontaktdaten werden vor dem Livegang verifiziert.</p>
+          <a className="button button-light" href="mailto:kontakt@example.com">Gespräch vorbereiten <span aria-hidden="true">↗</span></a>
+        </section>
+      </main>
+
+      <footer><strong>{{productName}}</strong><span>Digitale Konzeptvorschau</span><a href="#start">Nach oben ↑</a></footer>
+    </div>
+  );
+}}
+'''
+    css = '''@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@500;600;700&display=swap");
+
+:root {
+  color-scheme: dark;
+  --ink: #f5f7f2;
+  --muted: #a5aca3;
+  --surface: #0b0e0d;
+  --surface-raised: #121716;
+  --line: rgba(255, 255, 255, 0.12);
+  --accent: #c9ff4f;
+  --accent-dark: #162106;
+  --content: min(1180px, calc(100vw - 48px));
+  --radius: 24px;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--surface); }
+body { margin: 0; min-width: 320px; color: var(--ink); background: var(--surface); font-family: "DM Sans", system-ui, sans-serif; line-height: 1.6; }
+a { color: inherit; text-decoration: none; }
+.site-shell { overflow: clip; }
+.skip-link { position: fixed; z-index: 100; top: 12px; left: 12px; padding: 10px 16px; color: #071000; background: var(--accent); border-radius: 999px; transform: translateY(-160%); }
+.skip-link:focus { transform: translateY(0); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
+.site-header { position: absolute; z-index: 20; top: 0; left: 50%; width: var(--content); height: 92px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); transform: translateX(-50%); }
+.wordmark { max-width: 46vw; overflow: hidden; font-family: "Manrope", sans-serif; font-weight: 700; font-size: 1.05rem; text-overflow: ellipsis; white-space: nowrap; }
+nav { display: flex; align-items: center; gap: clamp(18px, 3vw, 42px); font-size: .9rem; }
+nav a { color: var(--muted); transition: color .25s ease; }
+nav a:hover { color: var(--ink); }
+.nav-cta { padding: 9px 16px; border: 1px solid var(--line); border-radius: 999px; }
+
+.hero { position: relative; min-height: 100svh; padding: clamp(160px, 22vh, 230px) max(24px, calc((100vw - 1180px) / 2)) 80px; display: flex; flex-direction: column; justify-content: center; isolation: isolate; }
+.hero-glow { position: absolute; z-index: -1; top: -25%; right: -15%; width: min(70vw, 900px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, rgba(201,255,79,.16), transparent 64%); filter: blur(12px); animation: breathe 8s ease-in-out infinite alternate; }
+.eyebrow, .section-label { margin: 0 0 24px; color: var(--accent); font-size: .72rem; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; }
+h1, h2, h3 { margin: 0; font-family: "Manrope", sans-serif; line-height: .98; letter-spacing: -.045em; }
+h1 { max-width: 1050px; font-size: clamp(3.35rem, 8.5vw, 8.2rem); }
+h1 span { color: var(--muted); }
+.hero-copy { max-width: 640px; margin: 38px 0 0 auto; color: #cbd0ca; font-size: clamp(1.08rem, 1.7vw, 1.35rem); }
+.hero-actions { max-width: 640px; width: 100%; margin: 36px 0 0 auto; display: flex; align-items: center; gap: 28px; }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 18px; min-height: 54px; padding: 0 25px; border-radius: 999px; font-weight: 600; transition: transform .3s var(--ease), background-color .3s ease; }
+.button:hover { transform: translateY(-3px); }
+.button-primary { color: #101507; background: var(--accent); box-shadow: 0 18px 50px rgba(201,255,79,.12); }
+.text-link { color: var(--muted); border-bottom: 1px solid var(--line); }
+.scroll-cue { position: absolute; left: max(24px, calc((100vw - 1180px) / 2)); bottom: 30px; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; }
+.scroll-cue span { width: 34px; height: 1px; background: var(--accent); animation: pulse-line 2s ease-in-out infinite; }
+
+.statement, .services, .contact { width: var(--content); margin-inline: auto; padding-block: clamp(110px, 15vw, 200px); }
+.statement { display: grid; grid-template-columns: .7fr 1.6fr 1fr; gap: clamp(28px, 5vw, 84px); align-items: start; border-top: 1px solid var(--line); }
+.statement h2, .section-heading h2, .contact h2 { font-size: clamp(2.7rem, 5.5vw, 5.4rem); }
+.statement > p:last-child { margin: 8px 0 0; color: var(--muted); }
+.services { border-top: 1px solid var(--line); }
+.section-heading { max-width: 870px; }
+.service-grid { margin-top: clamp(60px, 9vw, 110px); display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.service-card { min-height: 360px; padding: clamp(28px, 4vw, 50px); display: flex; flex-direction: column; background: var(--surface); transition: background-color .35s ease, transform .35s var(--ease); }
+.service-card:hover { z-index: 1; background: var(--surface-raised); transform: translateY(-6px); }
+.service-card > span { color: var(--accent); font-size: .78rem; }
+.service-card h3 { margin-top: auto; font-size: clamp(1.7rem, 3vw, 2.6rem); }
+.service-card p { color: var(--muted); margin: 22px 0 0; }
+.contact { width: 100%; padding-inline: max(24px, calc((100vw - 1180px) / 2)); background: var(--accent); color: #101508; }
+.contact .section-label { color: #405016; }
+.contact h2 { max-width: 930px; }
+.contact > p:not(.section-label) { max-width: 620px; margin: 30px 0; color: #35400e; }
+.button-light { background: #101508; color: var(--ink); }
+footer { width: var(--content); min-height: 150px; margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: 24px; color: var(--muted); font-size: .82rem; }
+footer strong { color: var(--ink); font-family: "Manrope", sans-serif; }
+
+[data-reveal] { opacity: 0; transform: translateY(42px); transition: opacity .9s var(--ease), transform .9s var(--ease); }
+[data-reveal].is-visible { opacity: 1; transform: translateY(0); }
+.service-card:nth-child(2) { transition-delay: .1s; }
+.service-card:nth-child(3) { transition-delay: .2s; }
+@keyframes breathe { to { transform: translate(-5%, 7%) scale(1.08); opacity: .7; } }
+@keyframes pulse-line { 50% { transform: scaleX(.45); transform-origin: left; opacity: .45; } }
+
+@media (max-width: 800px) {
+  :root { --content: min(100% - 32px, 1180px); }
+  .site-header { height: 76px; }
+  nav a:not(.nav-cta) { display: none; }
+  .hero { padding-inline: 16px; }
+  .hero-copy, .hero-actions { margin-left: 0; }
+  .statement { grid-template-columns: 1fr; }
+  .service-grid { grid-template-columns: 1fr; }
+  .service-card { min-height: 280px; }
+  footer { padding-block: 36px; flex-direction: column; align-items: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  [data-reveal] { opacity: 1; transform: none; }
+}
+'''
+    files = {
+        "package.json": json.dumps(package, indent=2, ensure_ascii=False) + "\n",
+        "index.html": f'''<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Digitale Konzeptvorschau für {html_name}." />
+    <title>{html_name} · Digitales Erlebnis</title>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+</html>
+''',
+        "tsconfig.json": '''{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.node.json"}]}\n''',
+        "tsconfig.app.json": '''{"compilerOptions":{"target":"ES2022","useDefineForClassFields":true,"lib":["ES2022","DOM","DOM.Iterable"],"allowJs":false,"skipLibCheck":true,"esModuleInterop":true,"allowSyntheticDefaultImports":true,"strict":true,"forceConsistentCasingInFileNames":true,"module":"ESNext","moduleResolution":"Bundler","resolveJsonModule":true,"isolatedModules":true,"noEmit":true,"jsx":"react-jsx"},"include":["src"]}\n''',
+        "tsconfig.node.json": '''{"compilerOptions":{"composite":true,"skipLibCheck":true,"module":"ESNext","moduleResolution":"Bundler","allowImportingTsExtensions":true,"noEmit":true},"include":["vite.config.ts"]}\n''',
+        "vite.config.ts": '''import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({ plugins: [react()] });\n''',
+        "src/vite-env.d.ts": '''/// <reference types="vite/client" />\n''',
+        "src/main.tsx": '''import { StrictMode } from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App";\n\ncreateRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);\n''',
+        "src/App.tsx": app,
+        "src/styles.css": css,
+    }
+    return [
+        {"path": f"{base}/{path}", "content": content}
+        for path, content in files.items()
+    ]
+
+
 def create_technical_blueprint(
     plan: ExecutionPlan,
     workspace: str,
@@ -55,7 +314,7 @@ def create_technical_blueprint(
             repository_type="react-vite-website",
             manifests=manifests,
             architecture=[
-                "React 18 mit TypeScript und Vite als reproduzierbare Build-Pipeline",
+                "Deterministisches React-19-/TypeScript-/Vite-Startergerüst als reproduzierbare Build-Pipeline",
                 "Semantische, responsive Komponenten statt monolithischer HTML-Datei",
                 "Zentrales visuelles System für Farben, Typografie, Abstände und Bewegung",
                 "Progressive Animationen mit Reduced-Motion-Alternative",
@@ -63,6 +322,8 @@ def create_technical_blueprint(
             file_plan=[
                 BlueprintFile(path=f"{base}/package.json", purpose="Build- und Laufzeitvertrag"),
                 BlueprintFile(path=f"{base}/index.html", purpose="Semantischer Vite-Einstieg"),
+                BlueprintFile(path=f"{base}/tsconfig.json", purpose="Stabile TypeScript-Projektkonfiguration"),
+                BlueprintFile(path=f"{base}/vite.config.ts", purpose="Stabile Vite- und React-Konfiguration"),
                 BlueprintFile(path=f"{base}/src/main.tsx", purpose="React-Bootstrap"),
                 BlueprintFile(path=f"{base}/src/App.tsx", purpose="Seitenstruktur und Conversion Journey"),
                 BlueprintFile(path=f"{base}/src/styles.css", purpose="Designsystem, Responsive Layout und Motion"),

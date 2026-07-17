@@ -4,6 +4,7 @@ from backend.app.models.execution_plan import ExecutionPlan, PlanStep
 from backend.app.services import coder as coder_module
 from backend.app.services import engineering_quality as quality_module
 from backend.app.services.engineering_quality import (
+    create_react_vite_scaffold,
     create_release_candidate,
     create_technical_blueprint,
     validate_product_build,
@@ -39,6 +40,33 @@ def test_blueprint_requires_professional_react_website(tmp_path: Path):
     assert "reduced-motion" in blueprint.quality_gates
     assert blueprint.test_plan
     assert blueprint.risks
+
+
+def test_deterministic_scaffold_is_professional_and_passes_product_gates(
+    tmp_path: Path,
+):
+    plan = website_plan()
+    files = create_react_vite_scaffold(
+        plan,
+        "Kernaussagen: Bairro Café-Bar: Opportunity für einen modernen Auftritt",
+    )
+    for item in files:
+        target = tmp_path / item["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(item["content"], encoding="utf-8")
+
+    validation = validate_product_quality(plan, str(tmp_path))
+    paths = {item["path"] for item in files}
+    app = (tmp_path / "projects/acme/src/App.tsx").read_text(encoding="utf-8")
+    styles = (tmp_path / "projects/acme/src/styles.css").read_text(encoding="utf-8")
+
+    assert validation["success"] is True
+    assert "projects/acme/vite.config.ts" in paths
+    assert "projects/acme/tsconfig.json" in paths
+    assert "Bairro Café-Bar" in app
+    assert "<nav" in app and "<main" in app and "<h1" in app
+    assert "prefers-reduced-motion" in styles
+    assert "@media (max-width" in styles
 
 
 def test_product_quality_rejects_plain_html_page(tmp_path: Path):

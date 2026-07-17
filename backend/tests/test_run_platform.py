@@ -1314,9 +1314,9 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
             "files": [],
             "edits": [
                 {
-                    "path": "projects/demo/index.html",
+                    "path": "projects/demo/src/BrandMark.tsx",
                     "search": "missing file",
-                    "replacement": "<h1>Demo</h1>",
+                    "replacement": "export const BrandMark = () => <strong>Demo</strong>",
                 }
             ],
         },
@@ -1348,9 +1348,36 @@ def test_creation_mode_converts_new_file_edit_into_file(tmp_path: Path, monkeypa
     assert completed is not None
     assert completed["status"] == "completed"
     assert completed["repair_attempts"] == 0
-    generated = Path(completed["workspace"]) / "projects/demo/index.html"
-    assert generated.read_text(encoding="utf-8") == "<h1>Demo</h1>"
-    assert completed["result"]["files"] == ["projects/demo/index.html"]
+    generated = Path(completed["workspace"]) / "projects/demo/src/BrandMark.tsx"
+    assert generated.read_text(encoding="utf-8") == (
+        "export const BrandMark = () => <strong>Demo</strong>"
+    )
+    assert "projects/demo/src/BrandMark.tsx" in completed["result"]["files"]
+    assert "projects/demo/package.json" in completed["result"]["files"]
+    event_types = {event["type"] for event in run_service.events(run["id"])}
+    assert "product.scaffold.created" in event_types
+
+
+def test_creation_mode_protects_deterministic_scaffold_files(tmp_path: Path):
+    plan = ExecutionPlan(
+        goal="Create a demo website",
+        summary="Build product",
+        creation_mode=True,
+        output_directory="projects/demo",
+        steps=[],
+    )
+
+    with pytest.raises(ValueError, match="deterministischen Startergerüst"):
+        run_engine_module.run_engine._creation_files(
+            plan,
+            str(tmp_path),
+            {
+                "files": [
+                    {"path": "projects/demo/package.json", "content": "{}"}
+                ],
+                "edits": [],
+            },
+        )
 
 
 def test_creation_mode_applies_repair_edits_before_full_validation(

@@ -12,6 +12,7 @@ from backend.app.services.agent_catalog import STEP_TO_AGENT
 from backend.app.services.agent_team import agent_team
 from backend.app.services.coder import execute_plan
 from backend.app.services.engineering_quality import (
+    create_react_vite_scaffold,
     create_release_candidate,
     create_technical_blueprint,
     validate_product_build,
@@ -34,6 +35,28 @@ class RunLimitExceeded(RuntimeError):
 
 
 class AutonomousRunEngine:
+    _SCAFFOLD_OWNED_PATHS = {
+        "index.html",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.app.json",
+        "tsconfig.node.json",
+        "vite.config.ts",
+        "src/main.tsx",
+        "src/vite-env.d.ts",
+    }
+
+    def _assert_product_path_is_customizable(self, plan: Any, path: str) -> None:
+        output_directory = (plan.output_directory or "").rstrip("/")
+        prefix = f"{output_directory}/"
+        relative = path[len(prefix):] if path.startswith(prefix) else path
+        if relative in self._SCAFFOLD_OWNED_PATHS:
+            raise ValueError(
+                f"{path} gehört zum deterministischen Startergerüst und darf von "
+                "BUILDER nicht verändert werden. Individualisiere src/App.tsx, "
+                "src/styles.css, Komponenten oder Assets."
+            )
+
     def _creation_files(
         self,
         plan: Any,
@@ -66,6 +89,8 @@ class AutonomousRunEngine:
                 "Produktdateien müssen im vorgesehenen Projektordner liegen: "
                 + ", ".join(invalid)
             )
+        for item in files:
+            self._assert_product_path_is_customizable(plan, item["path"])
         return files
 
     def _creation_edits(
@@ -83,6 +108,7 @@ class AutonomousRunEngine:
                 raise ValueError(
                     "Produkt-Edits müssen im vorgesehenen Projektordner liegen: " + path
                 )
+            self._assert_product_path_is_customizable(plan, path)
             if resolve_workspace_path(workspace, path).exists():
                 edits.append(item)
         return edits
@@ -355,6 +381,40 @@ class AutonomousRunEngine:
                     "blueprint": blueprint_payload,
                 },
             )
+
+            if plan.creation_mode and plan.output_directory:
+                scaffold_files = create_react_vite_scaffold(plan, run["task"])
+                changed_paths.update(
+                    self._apply_files(
+                        run_id,
+                        run["workspace"],
+                        scaffold_files,
+                        originals,
+                    )
+                )
+                scaffold_payload = {
+                    "version": "1.0",
+                    "stack": "react-vite-typescript",
+                    "root": plan.output_directory,
+                    "files": [item["path"] for item in scaffold_files],
+                }
+                run_service.add_event(
+                    run_id,
+                    "product.scaffold.created",
+                    scaffold_payload,
+                )
+                run_service.save_checkpoint(
+                    run_id,
+                    {
+                        "phase": "product_scaffold_created",
+                        "source_workspace": source_workspace,
+                        "sandbox": sandbox,
+                        "originals": originals,
+                        "changed_paths": sorted(changed_paths),
+                        "blueprint": blueprint_payload,
+                        "scaffold": scaffold_payload,
+                    },
+                )
 
             feedback = ""
             validation: dict[str, Any] = {"success": False, "checks": []}
